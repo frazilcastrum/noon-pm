@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Noon — dev harness</title>
+<script>
+/*
+  DEV HARNESS ONLY — not part of the deliverable.
+  The real runtime (claude.ai artifact) provides window.storage natively.
+  This shim mimics that API so noon.jsx can be developed/tested locally.
+  The shim's own backing store is localStorage, but the app never touches
+  localStorage directly — it only calls window.storage.
+*/
+(function () {
+  var NS = "noon-dev-storage:";
+  window.storage = {
+    get: function (key) {
+      var v = localStorage.getItem(NS + key);
+      return Promise.resolve(v == null ? null : { key: key, value: v });
+    },
+    set: function (key, value) {
+      localStorage.setItem(NS + key, String(value));
+      return Promise.resolve({ key: key, value: String(value) });
+    },
+    delete: function (key) {
+      localStorage.removeItem(NS + key);
+      return Promise.resolve(true);
+    },
+    list: function (prefix) {
+      var out = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k.indexOf(NS) === 0) {
+          var bare = k.slice(NS.length);
+          if (!prefix || bare.indexOf(prefix) === 0) {
+            out.push({ key: bare, value: localStorage.getItem(k) });
+          }
+        }
+      }
+      return Promise.resolve(out);
+    },
+  };
+})();
+</script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>html,body{margin:0;padding:0;}</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(async function () {
+  try {
+    var src = await (await fetch("./noon.jsx?t=" + Date.now())).text();
+    var body = src
+      .replace(/^import[^\n]*\n/gm, "")
+      .replace(/^export default App;?\s*$/m, "window.__NoonApp = App;");
+    var code = Babel.transform(body, {
+      presets: [["react", { runtime: "classic" }]],
+    }).code;
+    var hooks =
+      "const { useState, useEffect, useMemo, useCallback, useRef } = React;\n";
+    new Function("React", hooks + code)(React);
+    ReactDOM.createRoot(document.getElementById("root")).render(
+      React.createElement(window.__NoonApp)
+    );
+  } catch (e) {
+    document.getElementById("root").innerHTML =
+      '<pre style="color:#C0564F;padding:24px;white-space:pre-wrap;">' +
+      String(e && e.stack ? e.stack : e) +
+      "</pre>";
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>

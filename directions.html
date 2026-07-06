@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Noon — design direction sampler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700&family=Nunito:wght@600;700;800&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #EDEBE7; font-family: Inter, sans-serif; color: #333; }
+  .strip { padding: 34px 0 44px; }
+  .strip-head { max-width: 760px; margin: 0 auto 18px; padding: 0 24px; }
+  .strip-head .opt { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #8A8579; }
+  .strip-head h2 { font-size: 21px; letter-spacing: -0.3px; margin-top: 2px; }
+  .strip-head p { font-size: 13.5px; color: #6B655C; margin-top: 3px; }
+  .stage { max-width: 760px; margin: 0 auto; padding: 34px 24px; border-radius: 18px; }
+
+  /* ============ A · FIELD NOTES ============ */
+  .dA .stage { background: #FAF5EC; }
+  .dA { color: #2C2721; }
+  .dA .paper { background: #FFFDF8; border: 1px solid #EDE5D6; border-radius: 10px; padding: 26px 30px; box-shadow: 0 1px 3px rgba(90,75,55,0.06); }
+  .dA .paper + .paper { margin-top: 20px; }
+  .dA .kicker { font-family: Inter; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #A39781; }
+  .dA h3 { font-family: Fraunces, serif; font-weight: 500; font-size: 23px; letter-spacing: -0.2px; margin: 4px 0 16px; }
+  .dA .prose { font-family: Fraunces, serif; font-size: 19px; line-height: 2.1; font-weight: 400; color: #3A342C; }
+  .dA .blank { display: inline-block; min-width: 60px; padding: 0 6px 0px; border-bottom: 2px dotted #D9480F; color: #D9480F; font-weight: 500; text-align: center; }
+  .dA .blank.ghost { color: #C7B9A4; border-bottom-color: #D8CCB8; font-style: italic; }
+  .dA .chips { margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .dA .chips .lbl { font-size: 12px; color: #A39781; font-style: italic; font-family: Fraunces, serif; font-size: 14px; }
+  .dA .chip { font-size: 13px; padding: 3px 12px; border: 1px solid #E0D5C2; border-radius: 99px; background: #FBF7EE; color: #574F42; }
+  .dA .chip.s { border-color: #EFC4AC; background: #FCF0E7; color: #B0430E; }
+  .dA .act { margin-top: 22px; display: flex; justify-content: flex-end; align-items: baseline; gap: 16px; }
+  .dA .quiet { font-family: Fraunces, serif; font-style: italic; font-size: 14px; color: #A39781; }
+  .dA .btn { font-family: Fraunces, serif; font-size: 16px; background: none; border: none; color: #D9480F; border-bottom: 1px solid #D9480F; padding: 0 2px 2px; cursor: pointer; }
+  .dA .jhead { font-family: Fraunces, serif; font-size: 15px; font-style: italic; color: #8B8071; margin-bottom: 14px; }
+  .dA .jhead b { color: #2C2721; font-style: normal; font-weight: 600; }
+  .dA .ask { font-family: Fraunces, serif; font-size: 18px; margin: 14px 0 10px; }
+  .dA .words { display: flex; gap: 26px; font-family: Fraunces, serif; font-size: 17px; }
+  .dA .word { color: #9A8F7D; cursor: pointer; padding: 1px 10px; }
+  .dA .word.sel { color: #2C2721; border: 1.5px solid #D9480F; border-radius: 99px 42px 88px 52px / 52px 88px 42px 99px; }
+  .dA .lines { margin-top: 16px; font-family: Fraunces, serif; font-size: 16px; color: #6B6152; line-height: 2.3; background: repeating-linear-gradient(transparent, transparent 35px, #EAE0CE 35px, #EAE0CE 36px); padding-bottom: 4px; }
+  .dA .lines .hint { color: #B8AC96; font-style: italic; }
+
+  /* ============ B · GUIDED PATH ============ */
+  .dB .stage { background: linear-gradient(165deg, #FFF9F2 0%, #FFF3E6 100%); }
+  .dB { color: #33302B; }
+  .dB .path { display: flex; align-items: center; justify-content: center; gap: 0; margin-bottom: 8px; }
+  .dB .wp { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 110px; }
+  .dB .wp .node { width: 14px; height: 14px; border-radius: 50%; background: #EFE3D3; }
+  .dB .wp.done .node { background: #FF8A3D; }
+  .dB .wp.now .node { background: linear-gradient(135deg,#FF7A1A,#FFB25C); box-shadow: 0 0 0 6px rgba(255,138,61,0.18); }
+  .dB .wp .wlbl { font-size: 11.5px; font-weight: 600; color: #B4A88F; }
+  .dB .wp.now .wlbl { color: #E8590C; }
+  .dB .seg { height: 3px; width: 70px; background: #EFE3D3; border-radius: 2px; margin-bottom: 22px; }
+  .dB .seg.done { background: #FFB25C; }
+  .dB .q { text-align: center; font-size: 25px; font-weight: 700; letter-spacing: -0.4px; margin: 26px 0 6px; }
+  .dB .qsub { text-align: center; font-size: 14px; color: #A0937F; margin-bottom: 26px; }
+  .dB .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 620px; margin: 0 auto; }
+  .dB .ccard { background: #fff; border: 2px solid #F3E8D9; border-radius: 18px; padding: 20px 18px; text-align: center; cursor: pointer; transition: all .18s; }
+  .dB .ccard .ic { width: 34px; height: 34px; border-radius: 12px; margin: 0 auto 12px; background: #F6EFE4; }
+  .dB .ccard.sel { border-color: #FF8A3D; box-shadow: 0 10px 26px rgba(232,89,12,0.16); transform: translateY(-3px); }
+  .dB .ccard.sel .ic { background: linear-gradient(135deg,#FF7A1A,#FFB25C); }
+  .dB .ccard h4 { font-size: 15px; font-weight: 700; }
+  .dB .ccard p { font-size: 12.5px; color: #A0937F; margin-top: 4px; line-height: 1.45; }
+  .dB .nav { display: flex; justify-content: center; align-items: center; gap: 18px; margin-top: 30px; }
+  .dB .skip { background: none; border: none; font: inherit; font-size: 13.5px; color: #B4A88F; cursor: pointer; }
+  .dB .go { background: linear-gradient(135deg,#FF7A1A,#FF9A42); color: #fff; border: none; border-radius: 99px; padding: 12px 34px; font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: 0 8px 20px rgba(232,89,12,0.28); }
+  .dB .steplbl { text-align: center; font-size: 12.5px; color: #C4B69E; margin-top: 14px; }
+  .dB .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 auto 10px; }
+  .dB .note { max-width: 620px; margin: 18px auto 0; }
+  .dB .note input { width: 100%; border: 2px solid #F3E8D9; background: #fff; border-radius: 14px; padding: 13px 16px; font: inherit; font-size: 14.5px; color: #33302B; }
+  .dB .note input::placeholder { color: #C4B69E; }
+
+  /* ============ C · QUIET PRECISION ============ */
+  .dC .stage { background: #F7F6F3; }
+  .dC { color: #26241F; font-size: 13.5px; }
+  .dC .panel { background: #FDFCFA; border: 1px solid #E9E6DF; border-radius: 8px; overflow: hidden; }
+  .dC .panel + .panel { margin-top: 16px; }
+  .dC .phead { display: flex; align-items: baseline; padding: 12px 16px; border-bottom: 1px solid #EEEBE4; }
+  .dC .phead h4 { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .dC .phead .meta { margin-left: auto; font-size: 11.5px; color: #98938A; }
+  .dC .trow { display: flex; align-items: center; gap: 12px; padding: 9px 16px; border-bottom: 1px solid #F1EFE9; font-size: 13px; }
+  .dC .trow:last-child { border-bottom: none; }
+  .dC .trow .nm { font-weight: 500; width: 120px; }
+  .dC .trow .rl { color: #98938A; width: 120px; }
+  .dC .trow .cap { margin-left: auto; color: #6E6A61; font-variant-numeric: tabular-nums; }
+  .dC .trow.open { background: #FBF9F5; border-left: 2px solid #E8590C; padding: 12px 16px 12px 14px; display: block; }
+  .dC .fgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+  .dC .fc label { display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #98938A; margin-bottom: 4px; }
+  .dC .fc input, .dC .fc .seg3 { width: 100%; border: 1px solid #E0DCD3; border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; background: #fff; }
+  .dC .fc input:focus { outline: 2px solid rgba(232,89,12,0.35); outline-offset: 1px; border-color: #E8590C; }
+  .dC .khints { display: flex; gap: 8px; margin-top: 12px; }
+  .dC .kh { font-size: 10.5px; color: #98938A; border: 1px solid #E5E1D8; border-radius: 4px; padding: 1px 7px; background: #FAF8F4; }
+  .dC .seg3 { display: flex; padding: 2px; gap: 2px; }
+  .dC .seg3 span { flex: 1; text-align: center; font-size: 11.5px; padding: 3px 0; border-radius: 4px; color: #98938A; cursor: pointer; }
+  .dC .seg3 span.on { background: #F1EDE5; color: #26241F; font-weight: 500; }
+  .dC .seg3 span i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; }
+  .dC .cirow { display: flex; align-items: flex-end; gap: 10px; padding: 12px 16px; }
+  .dC .cirow .fc.grow { flex: 1; }
+  .dC .cta { background: #E8590C; color: #fff; border: none; border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .dC .prog { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-top: 1px solid #EEEBE4; font-size: 11.5px; color: #98938A; }
+  .dC .pbar { flex: 1; height: 3px; background: #ECE9E1; border-radius: 2px; }
+  .dC .pbar i { display: block; height: 100%; width: 50%; background: #B9B3A6; border-radius: 2px; }
+
+  /* ============ D · COMPANION ============ */
+  .dD .stage { background: linear-gradient(180deg, #FFF6EC 0%, #FFEDDD 100%); position: relative; overflow: hidden; }
+  .dD { color: #4A3F35; font-family: Nunito, Inter, sans-serif; }
+  .dD .arch { position: absolute; width: 340px; height: 340px; border-radius: 170px 170px 24px 24px; background: linear-gradient(180deg,#FFE0BE,#FFD2A8); opacity: .5; top: -60px; right: -70px; transform: rotate(12deg); }
+  .dD .bub { background: #FFFDFA; border-radius: 26px; padding: 26px 30px; box-shadow: 0 14px 34px rgba(200,120,50,0.13); position: relative; }
+  .dD .bub + .bub { margin-top: 22px; }
+  .dD h3 { font-size: 22px; font-weight: 800; letter-spacing: -0.2px; }
+  .dD .sub { font-size: 14.5px; color: #A08B76; font-weight: 600; margin-top: 3px; }
+  .dD .bigav { width: 62px; height: 62px; border-radius: 50%; background: linear-gradient(135deg,#FF8B5E,#FFB56B); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 800; box-shadow: 0 8px 18px rgba(255,120,60,0.3); }
+  .dD .hello { display: flex; gap: 18px; align-items: center; margin-bottom: 20px; }
+  .dD .frow { display: flex; gap: 12px; }
+  .dD .fld { flex: 1; }
+  .dD .fld label { display: block; font-size: 12px; font-weight: 800; color: #C09B79; margin: 0 0 5px 6px; letter-spacing: 0.02em; }
+  .dD .fld input { width: 100%; border: none; background: #FFF3E5; border-radius: 16px; padding: 13px 17px; font: inherit; font-size: 15px; font-weight: 600; color: #4A3F35; }
+  .dD .fld input::placeholder { color: #D3B591; }
+  .dD .moods { display: flex; gap: 12px; margin-top: 14px; }
+  .dD .mood { flex: 1; border-radius: 20px; padding: 16px 10px; text-align: center; background: #FFF3E5; cursor: pointer; border: 3px solid transparent; }
+  .dD .mood .face { width: 30px; height: 30px; border-radius: 50%; margin: 0 auto 8px; }
+  .dD .mood span { font-size: 13px; font-weight: 800; }
+  .dD .mood.sel { background: #fff; border-color: #FFB56B; box-shadow: 0 10px 22px rgba(255,140,70,0.2); }
+  .dD .squish { display: block; margin: 22px auto 0; background: linear-gradient(180deg,#FF9A55,#FF7E3D); border: none; color: #fff; font: inherit; font-size: 16px; font-weight: 800; border-radius: 99px; padding: 14px 40px; cursor: pointer; box-shadow: 0 6px 0 #E06427, 0 14px 26px rgba(224,100,39,0.25); }
+  .dD .streak { display: flex; align-items: center; gap: 10px; margin-top: 18px; justify-content: center; font-size: 13px; font-weight: 700; color: #C08A4E; }
+  .dD .sun { width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #FFD98A, #FFAD4D); }
+</style>
+</head>
+<body>
+
+<!-- ================= OPTION A ================= -->
+<section class="strip dA" id="optA">
+  <div class="strip-head">
+    <div class="opt">Option A</div>
+    <h2>Field Notes — forms become sentences</h2>
+    <p>Editorial serif warmth (Sunsama × a well-set journal). You write the case file; nothing feels like a database row.</p>
+  </div>
+  <div class="stage">
+    <div class="paper">
+      <div class="kicker">New to the roster</div>
+      <h3>Let's take down the essentials.</h3>
+      <p class="prose">
+        <span class="blank">Aisha Bello</span> joins as <span class="blank">Strategy analyst</span>,
+        bringing <span class="blank">4 years</span> of experience.
+        On <em>Website relaunch</em>, she'll give <span class="blank">60%</span> of her week
+        as <span class="blank ghost">her role on the project…</span>
+      </p>
+      <div class="chips">
+        <span class="lbl">she's strong at</span>
+        <span class="chip">SQL</span><span class="chip">stakeholder mgmt</span>
+        <span class="lbl">and reaching for</span>
+        <span class="chip s">workshop facilitation</span>
+      </div>
+      <div class="act">
+        <span class="quiet">you can refine this any time</span>
+        <button class="btn">That reads right — add her</button>
+      </div>
+    </div>
+    <div class="paper">
+      <div class="jhead">Week of June 29 · <b>Aisha Bello</b> on Website relaunch</div>
+      <p class="ask">How did the week feel?</p>
+      <div class="words">
+        <span class="word">on track</span>
+        <span class="word sel">at risk</span>
+        <span class="word">blocked</span>
+      </div>
+      <p class="ask" style="margin-top:20px;">She gave about <span class="blank" style="min-width:44px;">70%</span> of her week — a touch over the 60% planned.</p>
+      <div class="lines">CMS vendor slipped; she pulled extra hours to keep discovery on schedule.<br /><span class="hint">anything else worth remembering in December…</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= OPTION B ================= -->
+<section class="strip dB" id="optB">
+  <div class="strip-head">
+    <div class="opt">Option B</div>
+    <h2>Guided Path — one honest question at a time</h2>
+    <p>Conversational journey (Typeform × Duolingo, minus the gamification). Waypoints, big tappable choices, no visible form.</p>
+  </div>
+  <div class="stage">
+    <div class="path">
+      <div class="wp done"><div class="node"></div><div class="wlbl">Who</div></div>
+      <div class="seg done"></div>
+      <div class="wp now"><div class="node"></div><div class="wlbl">Trust</div></div>
+      <div class="seg"></div>
+      <div class="wp"><div class="node"></div><div class="wlbl">Capacity</div></div>
+    </div>
+    <h3 class="q">How much ownership does Aisha carry?</h3>
+    <p class="qsub">Your gut read is fine — Noon adjusts as the weeks come in.</p>
+    <div class="cards">
+      <div class="ccard"><div class="ic"></div><h4>Close guidance</h4><p>You review most of what ships</p></div>
+      <div class="ccard sel"><div class="ic"></div><h4>Largely autonomous</h4><p>She runs it; you stay in the loop</p></div>
+      <div class="ccard"><div class="ic"></div><h4>Fully autonomous</h4><p>You'd hand her the keys</p></div>
+    </div>
+    <div class="nav">
+      <button class="skip">decide later</button>
+      <button class="go">Feels right →</button>
+    </div>
+    <p class="steplbl">two of three — nearly there</p>
+
+    <div style="height:34px"></div>
+
+    <h3 class="q" style="font-size:21px;">How did Aisha's week go?</h3>
+    <div class="cards">
+      <div class="ccard"><span class="dot" style="background:#3D8B63"></span><h4>Moving as planned</h4><p>steady week</p></div>
+      <div class="ccard sel"><span class="dot" style="background:#D9971E"></span><h4>Wobbling a little</h4><p>worth keeping an eye on</p></div>
+      <div class="ccard"><span class="dot" style="background:#C0564F"></span><h4>Stuck — needs you</h4><p>step in this week</p></div>
+    </div>
+    <div class="note"><input placeholder="One honest sentence is plenty…" /></div>
+  </div>
+</section>
+
+<!-- ================= OPTION C ================= -->
+<section class="strip dC" id="optC">
+  <div class="strip-head">
+    <div class="opt">Option C</div>
+    <h2>Quiet Precision — the tool disappears</h2>
+    <p>Linear-style restraint with Noon's warmth. Edit-in-place, hairlines not boxes, fast exact motion, keyboard-first. Calm through rhythm, not decoration.</p>
+  </div>
+  <div class="stage">
+    <div class="panel">
+      <div class="phead"><h4>Team — Website relaunch</h4><span class="meta">2 people · 100% combined</span></div>
+      <div class="trow"><span class="nm">Devon Park</span><span class="rl">Visual designer</span><span class="cap">40% · design</span></div>
+      <div class="trow open">
+        <div style="display:flex;align-items:center;gap:12px;"><span class="nm">Aisha Bello</span><span class="rl">Strategy analyst</span><span class="cap" style="margin-left:auto;">editing…</span></div>
+        <div class="fgrid">
+          <div class="fc"><label>Capacity</label><input value="60%" /></div>
+          <div class="fc"><label>Role here</label><input value="Research lead" /></div>
+          <div class="fc"><label>Experience</label><input value="4 yrs · Mid" /></div>
+          <div class="fc"><label>Ownership</label><input value="4 of 5" /></div>
+        </div>
+        <div class="khints"><span class="kh">↵ save</span><span class="kh">esc cancel</span><span class="kh">tab next field</span></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="phead"><h4>This week — Jun 29</h4><span class="meta">1 of 2 logged</span></div>
+      <div class="cirow">
+        <div class="fc" style="width:150px;"><label>Aisha · progress</label>
+          <div class="seg3"><span><i style="background:#5E8C74"></i>track</span><span class="on"><i style="background:#B98A2E"></i>risk</span><span><i style="background:#B0605A"></i>blocked</span></div>
+        </div>
+        <div class="fc" style="width:70px;"><label>Spent</label><input value="70%" /></div>
+        <div class="fc grow"><label>Note</label><input placeholder="What happened — one line" /></div>
+        <button class="cta">Log ⏎</button>
+      </div>
+      <div class="prog"><span>Devon logged · Aisha in progress</span><div class="pbar"><i></i></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= OPTION D ================= -->
+<section class="strip dD" id="optD">
+  <div class="strip-head">
+    <div class="opt">Option D</div>
+    <h2>Companion — soft, round, encouraging</h2>
+    <p>Headspace-adjacent warmth: arches, squishy buttons, chunky rounded type. The tool cheers quietly for you. Friendliest — and least “work software”.</p>
+  </div>
+  <div class="stage">
+    <div class="arch"></div>
+    <div class="bub">
+      <div class="hello">
+        <div class="bigav">AB</div>
+        <div><h3>Let's welcome Aisha</h3><div class="sub">a few friendly details and she's in</div></div>
+      </div>
+      <div class="frow">
+        <div class="fld"><label>Her name</label><input value="Aisha Bello" /></div>
+        <div class="fld"><label>What she does</label><input value="Strategy analyst" /></div>
+      </div>
+      <div class="frow" style="margin-top:12px;">
+        <div class="fld"><label>Years in the game</label><input value="4" /></div>
+        <div class="fld"><label>Superpowers</label><input placeholder="SQL, stakeholder mgmt…" /></div>
+      </div>
+    </div>
+    <div class="bub">
+      <h3 style="font-size:19px;">How was Aisha's week?</h3>
+      <div class="moods">
+        <div class="mood"><div class="face" style="background:#7DC49B"></div><span>Cruising</span></div>
+        <div class="mood sel"><div class="face" style="background:#FFC366"></div><span>Bumpy</span></div>
+        <div class="mood"><div class="face" style="background:#F09A93"></div><span>Stuck</span></div>
+      </div>
+      <button class="squish">Log the week</button>
+      <div class="streak"><div class="sun"></div> three weeks in a row — the case file is building itself</div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
