@@ -26,8 +26,11 @@ scripts used by the harness).
 
 One key per related data cluster, to minimize storage calls:
 
-- `noon:members` — array of all team members
-- `noon:project:<id>` — `{ project, assignments, checkIns }` for one project
+- `noon:members` — array of all team members (each may carry `fieldNotes`: dated out-of-project observations)
+- `noon:project:<id>` — `{ project, assignments, checkIns, weekPlans }` for one project.
+  `weekPlans` holds per-week planned-capacity overrides (set from the This week page);
+  `project.retrospective` and `assignment.performanceSummary` hold the manager-written
+  wrap-up assessments.
 
 ## Design language — "Guided Path"
 
@@ -42,7 +45,8 @@ direction sampler this was chosen from (Option B).
 
 ## Structure
 
-- **Dashboard** — active projects with member avatars + traffic-light status; wrapped-up projects below.
+- **Dashboard** — active projects with member avatars, each carrying their own traffic-light badge; wrapped-up projects below.
+- **This week** — top-down weekly planning: everyone's total load for a chosen week with an overload-aware bar, and per-project planned % editable in place (stored as weekly overrides of the standing allocation).
 - **People (roster)** — trust profile per member (Core/Stretch competencies, experience bucket, responsibility 1–5) plus aggregate allocation across active projects, with over-allocation flagged.
 - **Project view** — three stages as tabs:
   - *Onboarding*: edit project attributes; assign people with capacity % and notes.
