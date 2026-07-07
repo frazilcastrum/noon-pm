@@ -176,6 +176,17 @@ function latestCheckIn(checkIns, assignmentId) {
   return best;
 }
 
+/* Planned capacity for a given week: the week's override if the manager set
+   one, otherwise the assignment's standing default. */
+function plannedFor(bundle, assignmentId, weekOf) {
+  const wp = (bundle.weekPlans || []).find(
+    (p) => p.assignmentId === assignmentId && p.weekOf === weekOf
+  );
+  if (wp) return wp.planned;
+  const a = bundle.assignments.find((x) => x.id === assignmentId);
+  return a ? a.capacityAllocated : 0;
+}
+
 /* ============================== styles ============================== */
 
 const CSS = `
@@ -237,6 +248,26 @@ const CSS = `
 .av-stack{display:flex;}
 .av-stack .av{border:2.5px solid #fff;margin-left:-9px;}
 .av-stack .av:first-child{margin-left:0;}
+.av-wrap{position:relative;display:inline-flex;margin-left:-9px;}
+.av-stack .av-wrap:first-child{margin-left:0;}
+.av-wrap .av{margin-left:0;border:2.5px solid #fff;}
+.av-dot{position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-radius:50%;border:2px solid #fff;}
+.pct-warn{display:block;font-size:11.5px;color:#C0564F;font-weight:600;margin-top:4px;animation:fadeUp .2s ease;}
+.fnote{display:flex;align-items:baseline;gap:7px;font-size:13px;color:#6E6455;padding:3px 0;}
+.fnote .fn-date{color:#C4B69E;font-size:12px;white-space:nowrap;}
+.fnote .fn-x{background:none;border:none;color:#D8CDBC;font-size:13px;cursor:pointer;padding:0 3px;line-height:1;}
+.fnote .fn-x:hover{color:#C0564F;}
+.tw-week{display:flex;align-items:center;gap:10px;margin:0 0 20px;}
+.tw-week .inp{max-width:170px;}
+.wknav{background:#fff;border:1.5px solid #F0E2CF;width:34px;height:34px;border-radius:50%;font-size:15px;color:#A0937F;cursor:pointer;transition:all .15s ease;}
+.wknav:hover{color:#E8590C;border-color:#FFB25C;}
+.tw-total{margin-left:auto;font-size:13.5px;color:#8A8071;}
+.tw-total b{color:#33302B;}
+.tw-total .over{color:#C0564F;font-weight:700;}
+.tw-proj{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1.5px solid #FBF2E6;}
+.tw-proj .tw-pname{flex:1;min-width:0;font-weight:600;font-size:14px;background:none;border:none;color:#33302B;text-align:left;cursor:pointer;padding:0;}
+.tw-proj .tw-pname:hover{color:#E8590C;}
+.tw-proj .tw-sub{font-size:12px;color:#A0937F;}
 
 .tabs{display:flex;gap:6px;margin:20px 0 22px;}
 .tabs button{background:none;border:none;font-size:14px;font-weight:600;color:#A0937F;padding:8px 18px;cursor:pointer;border-radius:99px;transition:all .15s ease;}
@@ -301,8 +332,12 @@ const CSS = `
 .resp-dots i.f{background:linear-gradient(135deg,#FF7A1A,#FFB25C);}
 .mini-label{font-size:12px;color:#A0937F;font-weight:700;margin-right:6px;}
 
-.alloc-bar{height:6px;border-radius:3px;background:#F8EDDD;margin:9px 0 7px;overflow:hidden;}
-.alloc-bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#FF7A1A,#FFB25C);}
+.alloc-bar{position:relative;display:flex;height:6px;border-radius:3px;background:#F8EDDD;margin:9px 0 7px;}
+.alloc-bar i{display:block;height:100%;}
+.alloc-bar .ab-base{border-radius:3px 0 0 3px;background:linear-gradient(90deg,#FF7A1A,#FFB25C);}
+.alloc-bar .ab-base.only{border-radius:3px;}
+.alloc-bar .ab-over{background:#C0564F;border-radius:0 3px 3px 0;}
+.alloc-bar .ab-tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:#FFF9F3;border-radius:1px;}
 .alloc-note{font-size:13px;color:#A0937F;}
 .alloc-over{color:#C0564F;font-weight:700;}
 .member-card h3{font-size:15.5px;}
@@ -497,23 +532,97 @@ function TagList({ tags, variant, none }) {
   );
 }
 
-/* Numeric input that keeps local state and commits on blur. */
-function BlurNum({ id, value, onCommit }) {
+/* Percent input: local state, commits on blur. Caps a single project at
+   100% — but says so out loud instead of silently rewriting the number. */
+function PctInput({ id, value, onCommit, mini }) {
   const [v, setV] = useState(String(value));
+  const [warn, setWarn] = useState(false);
   useEffect(() => setV(String(value)), [value]);
+  return (
+    <span style={{ display: "inline-block" }}>
+      <input
+        id={id}
+        className={"inp num" + (mini ? " mini" : "")}
+        type="number"
+        min={0}
+        max={100}
+        value={v}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => {
+          const over = Number(v) > 100;
+          const n = clampPct(v);
+          setV(String(n));
+          if (over) {
+            setWarn(true);
+            setTimeout(() => setWarn(false), 3500);
+          } else setWarn(false);
+          if (n !== value) onCommit(n);
+        }}
+      />
+      {warn && (
+        <span className="pct-warn">
+          one project maxes at 100% — overload shows on their total
+        </span>
+      )}
+    </span>
+  );
+}
+
+/* Allocation bar that can show overload: fills past the 100% tick in red
+   instead of quietly capping. */
+function AllocBar({ total }) {
+  const scale = Math.max(total, 100);
+  const base = Math.min(total, 100);
+  return (
+    <div className="alloc-bar">
+      <i
+        className={"ab-base" + (total <= 100 ? " only" : "")}
+        style={{ width: (base / scale) * 100 + "%" }}
+      />
+      {total > 100 && <i className="ab-over" style={{ width: ((total - 100) / scale) * 100 + "%" }} />}
+      {total > 100 && <span className="ab-tick" style={{ left: (100 / scale) * 100 + "%" }} />}
+    </div>
+  );
+}
+
+function BlurTextarea({ id, value, onCommit, placeholder }) {
+  const [v, setV] = useState(value || "");
+  useEffect(() => setV(value || ""), [value]);
+  return (
+    <textarea
+      id={id}
+      className="ta"
+      value={v}
+      placeholder={placeholder}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => {
+        if (v !== (value || "")) onCommit(v);
+      }}
+    />
+  );
+}
+
+/* One-line quick capture for out-of-project field notes. */
+function QuickNote({ id, onAdd }) {
+  const [text, setText] = useState("");
+  const commit = () => {
+    const t = text.trim();
+    if (t) onAdd(t);
+    setText("");
+  };
   return (
     <input
       id={id}
-      className="inp num"
-      type="number"
-      min={0}
-      max={100}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={() => {
-        const n = clampPct(v);
-        if (n !== value) onCommit(n);
-        else setV(String(value));
+      className="inp"
+      style={{ marginTop: 6 }}
+      value={text}
+      placeholder="Noticed something? Jot it — press Enter"
+      onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit();
+        }
       }}
     />
   );
@@ -544,6 +653,14 @@ const CAP_OPTS = [
 ];
 
 function CapChips({ value, onChange, id }) {
+  const [warn, setWarn] = useState(false);
+  const set = (raw) => {
+    if (Number(raw) > 100) {
+      setWarn(true);
+      setTimeout(() => setWarn(false), 3500);
+    }
+    onChange(clampPct(raw));
+  };
   return (
     <div className="capwrap">
       <div className="capchips">
@@ -567,10 +684,11 @@ function CapChips({ value, onChange, id }) {
           min={0}
           max={100}
           value={value}
-          onChange={(e) => onChange(clampPct(e.target.value))}
+          onChange={(e) => set(e.target.value)}
         />
         % of their week
       </span>
+      {warn && <span className="pct-warn">one project maxes at 100% — overload shows on their total</span>}
     </div>
   );
 }
@@ -781,6 +899,14 @@ function MemberJourney({ member, onSave, onClose }) {
 /* ============================ project journey ============================ */
 
 function PeoplePicker({ people, selections, onToggle, onSetCap }) {
+  const [warnId, setWarnId] = useState(null);
+  const set = (id, raw) => {
+    if (Number(raw) > 100) {
+      setWarnId(id);
+      setTimeout(() => setWarnId((w) => (w === id ? null : w)), 3500);
+    }
+    onSetCap(id, clampPct(raw));
+  };
   return (
     <div className="pgrid">
       {people.map((m) => {
@@ -813,8 +939,11 @@ function PeoplePicker({ people, selections, onToggle, onSetCap }) {
                   min={0}
                   max={100}
                   value={selections[m.id]}
-                  onChange={(e) => onSetCap(m.id, clampPct(e.target.value))}
+                  onChange={(e) => set(m.id, e.target.value)}
                 />
+                {warnId === m.id && (
+                  <span className="pct-warn">one project maxes at 100%</span>
+                )}
               </div>
             )}
           </div>
@@ -1176,17 +1305,21 @@ function ProjectCard({ bundle, membersById, onOpen, wrapped }) {
         <span className="av-stack">
           {assignments.slice(0, 5).map((a) => {
             const m = membersById[a.memberId];
-            return <Avatar key={a.id} name={m ? m.name : "?"} />;
+            const latest = latestCheckIn(checkIns, a.id);
+            const meta = latest ? STATUS_META[latest.progressStatus] : NO_STATUS;
+            return (
+              <span
+                key={a.id}
+                className="av-wrap"
+                title={(m ? m.name : "?") + " — " + meta.label}
+              >
+                <Avatar name={m ? m.name : "?"} />
+                <span className="av-dot" style={{ background: meta.color }} />
+              </span>
+            );
           })}
         </span>
         {assignments.length === 0 && <span className="tag-none">no one on it yet</span>}
-        <span className="dots">
-          {assignments.map((a) => {
-            const latest = latestCheckIn(checkIns, a.id);
-            const m = latest ? STATUS_META[latest.progressStatus] : NO_STATUS;
-            return <Dot key={a.id} color={m.color} />;
-          })}
-        </span>
         <span className="proj-meta">
           {lastWeek ? "last check-in · wk of " + fmtWeek(lastWeek) : "no check-ins yet"}
         </span>
@@ -1197,7 +1330,7 @@ function ProjectCard({ bundle, membersById, onOpen, wrapped }) {
 
 /* ============================== roster ============================== */
 
-function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember }) {
+function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember, onAddNote, onDeleteNote }) {
   const activeBundles = bundles.filter((b) => b.project.status === "active");
 
   const allocFor = (memberId) => {
@@ -1260,23 +1393,14 @@ function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember })
 
                 <div style={{ marginTop: 15 }}>
                   <span className="label">Allocation</span>
-                  <div className="alloc-bar">
-                    <i
-                      style={{
-                        width: Math.min(total, 100) + "%",
-                        background:
-                          total > 100
-                            ? "#C0564F"
-                            : "linear-gradient(90deg,#FF7A1A,#FFB25C)",
-                      }}
-                    />
-                  </div>
+                  <AllocBar total={total} />
                   <div className="alloc-note">
                     {rows.length === 0 ? (
                       "Not on any active project — room to breathe."
                     ) : (
                       <React.Fragment>
-                        <b style={{ color: "#33302B" }}>{total}%</b> of their week is spoken for
+                        <b style={{ color: total > 100 ? "#C0564F" : "#33302B" }}>{total}%</b> of
+                        their week is spoken for
                         {total > 100 && <span className="alloc-over"> · stretched thin</span>}
                         {total > 0 && total < 50 && " · room for more"}
                       </React.Fragment>
@@ -1292,10 +1416,145 @@ function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember })
                     </div>
                   )}
                 </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <span className="label">Field notes</span>
+                  {(m.fieldNotes || [])
+                    .slice(-3)
+                    .reverse()
+                    .map((n) => (
+                      <div className="fnote" key={n.id}>
+                        <span className="fn-date">{fmtWeek(n.date)}</span>
+                        <span style={{ flex: 1 }}>{n.text}</span>
+                        <button
+                          type="button"
+                          className="fn-x"
+                          aria-label="Delete note"
+                          onClick={() => onDeleteNote(m.id, n.id)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  {(m.fieldNotes || []).length > 3 && (
+                    <div className="trust-sub">+ {(m.fieldNotes || []).length - 3} earlier</div>
+                  )}
+                  <QuickNote id={"note-" + m.id} onAdd={(t) => onAddNote(m.id, t)} />
+                </div>
               </div>
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================ this week ============================ */
+
+function ThisWeek({ bundles, members, onSetPlan, onOpen }) {
+  const [week, setWeek] = useState(thisMonday());
+  const norm = mondayOf(week);
+  const shift = (days) => {
+    const d = new Date(norm + "T00:00:00");
+    d.setDate(d.getDate() + days);
+    setWeek(toISODate(d));
+  };
+
+  const active = bundles.filter((b) => b.project.status === "active");
+  const rows = members
+    .map((m) => {
+      const items = [];
+      for (const b of active)
+        for (const a of b.assignments)
+          if (a.memberId === m.id)
+            items.push({
+              bundle: b,
+              assignment: a,
+              planned: plannedFor(b, a.id, norm),
+              checkIn: b.checkIns.find((c) => c.assignmentId === a.id && c.weekOf === norm),
+            });
+      return {
+        member: m,
+        items,
+        total: items.reduce((s, i) => s + (Number(i.planned) || 0), 0),
+      };
+    })
+    .filter((r) => r.items.length > 0);
+
+  return (
+    <div>
+      <h1 className="page-title">This week</h1>
+      <p className="page-sub">
+        The whole week's load in one place — shape it top-down before the projects pull.
+      </p>
+
+      <div className="tw-week">
+        <button className="wknav" onClick={() => shift(-7)} aria-label="Previous week">
+          ‹
+        </button>
+        <input
+          id="tw-week"
+          className="inp"
+          type="date"
+          value={week}
+          onChange={(e) => setWeek(e.target.value)}
+        />
+        <button className="wknav" onClick={() => shift(7)} aria-label="Next week">
+          ›
+        </button>
+        <span className="trust-sub">week of {fmtDate(norm)}</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="card empty">
+          <p style={{ marginBottom: 0 }}>
+            No one is on an active project yet — add people from a project's Onboarding tab,
+            and their week shows up here.
+          </p>
+        </div>
+      ) : (
+        rows.map(({ member: m, items, total }) => (
+          <div className="card" key={m.id}>
+            <div className="row">
+              <Avatar name={m.name} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h3>{m.name}</h3>
+                <div className="trust-sub">{m.role || "—"}</div>
+              </div>
+              <span className="tw-total">
+                planned <b className={total > 100 ? "over" : ""}>{total}%</b>
+                {total > 100 && <span className="over"> · stretched thin</span>}
+              </span>
+            </div>
+            <AllocBar total={total} />
+            {items.map((it) => {
+              const meta = it.checkIn ? STATUS_META[it.checkIn.progressStatus] : NO_STATUS;
+              return (
+                <div className="tw-proj" key={it.assignment.id}>
+                  <Dot color={meta.color} />
+                  <button
+                    className="tw-pname"
+                    onClick={() => onOpen(it.bundle.project.id, "progression")}
+                  >
+                    {it.bundle.project.name}
+                  </button>
+                  <PctInput
+                    id={"twp-" + it.assignment.id}
+                    value={it.planned}
+                    onCommit={(n) => onSetPlan(it.bundle.project.id, it.assignment.id, norm, n)}
+                  />
+                  <span className="tw-sub">
+                    % this week
+                    {it.planned !== it.assignment.capacityAllocated
+                      ? " · usually " + it.assignment.capacityAllocated + "%"
+                      : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ))
       )}
     </div>
   );
@@ -1474,12 +1733,12 @@ function OnboardingTab({
                   <div className="rl">{m.role || "—"}</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center" }}>
-                  <BlurNum
+                  <PctInput
                     id={"cap-" + a.id}
                     value={a.capacityAllocated}
                     onCommit={(n) => onUpdateAssignment(a.id, { capacityAllocated: n })}
                   />
-                  <span className="cap-suffix">% of their week</span>
+                  <span className="cap-suffix">% of a typical week</span>
                 </div>
                 <div style={{ flex: 1.2, minWidth: 120 }}>
                   <BlurText
@@ -1568,6 +1827,7 @@ function ProgressionTab({ bundle, membersById, onSaveCheckIn, onTab }) {
             assignment={a}
             member={m}
             history={history}
+            getPlanned={(wk) => plannedFor(bundle, a.id, wk)}
             onSave={onSaveCheckIn}
           />
         );
@@ -1576,29 +1836,27 @@ function ProgressionTab({ bundle, membersById, onSaveCheckIn, onTab }) {
   );
 }
 
-function CheckInCard({ assignment, member, history, onSave }) {
+function CheckInCard({ assignment, member, history, getPlanned, onSave }) {
   const [week, setWeek] = useState(thisMonday());
   const [status, setStatus] = useState("on track");
-  const [actual, setActual] = useState(String(assignment.capacityAllocated));
+  const [actual, setActual] = useState(() => String(getPlanned(thisMonday())));
   const [note, setNote] = useState("");
   const [flash, setFlash] = useState(false);
 
   const first = firstName(member.name);
   const normWeek = mondayOf(week);
   const existing = history.find((c) => c.weekOf === normWeek);
+  const planned = getPlanned(normWeek);
 
-  // When the chosen week changes, pre-fill from an existing check-in for that
-  // week so saving edits it rather than silently overwriting blind.
+  // Pre-fill only when the chosen week already has a logged check-in, so
+  // saving edits it rather than silently overwriting. Switching to an empty
+  // week keeps whatever is typed — a wrong date should never eat the entry.
   useEffect(() => {
     const ex = history.find((c) => c.weekOf === mondayOf(week));
     if (ex) {
       setStatus(ex.progressStatus);
       setActual(String(ex.capacityActual));
       setNote(ex.note || "");
-    } else {
-      setStatus("on track");
-      setActual(String(assignment.capacityAllocated));
-      setNote("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [week]);
@@ -1672,7 +1930,9 @@ function CheckInCard({ assignment, member, history, onSave }) {
               value={actual}
               onChange={(e) => setActual(e.target.value)}
             />
-            <span className="cap-suffix">% vs {assignment.capacityAllocated}% planned</span>
+            <span className="cap-suffix">
+              % vs {planned}% planned{planned !== assignment.capacityAllocated ? " this week" : ""}
+            </span>
           </div>
         </div>
         <div className="field" style={{ flex: 2 }}>
@@ -1717,7 +1977,7 @@ function CheckInCard({ assignment, member, history, onSave }) {
 
 /* ---------- wrap-up tab ---------- */
 
-function WrapUpTab({ bundle, membersById, onUpdateProject }) {
+function WrapUpTab({ bundle, membersById, onUpdateProject, onUpdateAssignment }) {
   const { project, assignments, checkIns } = bundle;
 
   const weeks = useMemo(() => {
@@ -1776,6 +2036,15 @@ function WrapUpTab({ bundle, membersById, onUpdateProject }) {
               )}
             </p>
             {project.requirements && <p className="quote">Brief: {project.requirements}</p>}
+            <div className="field" style={{ marginTop: 16, marginBottom: 0 }}>
+              <label htmlFor="p-retro">How did this project go? — your assessment</label>
+              <BlurTextarea
+                id="p-retro"
+                value={project.retrospective}
+                placeholder="Your words, saved for December — what worked, what didn't, what you'd do differently…"
+                onCommit={(v) => onUpdateProject(project.id, { retrospective: v })}
+              />
+            </div>
           </div>
           {project.status === "active" ? (
             <button
@@ -1862,6 +2131,17 @@ function WrapUpTab({ bundle, membersById, onUpdateProject }) {
                   )}
                   {lastNoted && <p className="quote">"{lastNoted.note}"</p>}
                 </div>
+                <div style={{ marginTop: 12 }}>
+                  <span className="label">Their year in one line</span>
+                  <div style={{ marginTop: 6 }}>
+                    <BlurText
+                      id={"perf-" + a.id}
+                      value={a.performanceSummary}
+                      placeholder={"One line on how " + firstName(m.name) + " performed here…"}
+                      onCommit={(v) => onUpdateAssignment(a.id, { performanceSummary: v })}
+                    />
+                  </div>
+                </div>
               </div>
             );
           })}
@@ -1930,6 +2210,7 @@ function App() {
               project: b.project,
               assignments: Array.isArray(b.assignments) ? b.assignments : [],
               checkIns: Array.isArray(b.checkIns) ? b.checkIns : [],
+              weekPlans: Array.isArray(b.weekPlans) ? b.weekPlans : [],
             });
           }
         }
@@ -2028,6 +2309,7 @@ function App() {
         ...b,
         assignments: b.assignments.filter((a) => a.memberId !== memberId),
         checkIns: b.checkIns.filter((c) => !dropped.includes(c.assignmentId)),
+        weekPlans: (b.weekPlans || []).filter((p) => !dropped.includes(p.assignmentId)),
       });
     }
   };
@@ -2064,7 +2346,44 @@ function App() {
       ...b,
       assignments: b.assignments.filter((a) => a.id !== assignmentId),
       checkIns: b.checkIns.filter((c) => c.assignmentId !== assignmentId),
+      weekPlans: (b.weekPlans || []).filter((p) => p.assignmentId !== assignmentId),
     });
+  };
+
+  const setWeekPlan = (projectId, assignmentId, weekOf, planned) => {
+    const b = bundles.find((x) => x.project.id === projectId);
+    if (!b) return;
+    const weekPlans = (b.weekPlans || []).filter(
+      (p) => !(p.assignmentId === assignmentId && p.weekOf === weekOf)
+    );
+    weekPlans.push({ id: uid(), assignmentId, weekOf, planned: clampPct(planned) });
+    persistBundle({ ...b, weekPlans });
+  };
+
+  const addFieldNote = (memberId, text) => {
+    persistMembers(
+      members.map((m) =>
+        m.id === memberId
+          ? {
+              ...m,
+              fieldNotes: [
+                ...(m.fieldNotes || []),
+                { id: uid(), date: toISODate(new Date()), text },
+              ],
+            }
+          : m
+      )
+    );
+  };
+
+  const deleteFieldNote = (memberId, noteId) => {
+    persistMembers(
+      members.map((m) =>
+        m.id === memberId
+          ? { ...m, fieldNotes: (m.fieldNotes || []).filter((n) => n.id !== noteId) }
+          : m
+      )
+    );
   };
 
   const saveCheckIn = (projectId, data) => {
@@ -2120,6 +2439,17 @@ function App() {
         onNewMember={() => setModal({ type: "member" })}
         onEditMember={(m) => setModal({ type: "member", member: m })}
         onDeleteMember={deleteMember}
+        onAddNote={addFieldNote}
+        onDeleteNote={deleteFieldNote}
+      />
+    );
+  } else if (page.name === "week") {
+    content = (
+      <ThisWeek
+        bundles={bundles}
+        members={members}
+        onSetPlan={setWeekPlan}
+        onOpen={(id, tab) => setPage({ name: "project", id, tab })}
       />
     );
   } else if (page.name === "project") {
@@ -2174,10 +2504,16 @@ function App() {
         </button>
         <nav className="nav">
           <button
-            className={page.name !== "roster" ? "on" : ""}
+            className={page.name === "dashboard" || page.name === "project" ? "on" : ""}
             onClick={() => setPage({ name: "dashboard" })}
           >
             Projects
+          </button>
+          <button
+            className={page.name === "week" ? "on" : ""}
+            onClick={() => setPage({ name: "week" })}
+          >
+            This week
           </button>
           <button
             className={page.name === "roster" ? "on" : ""}
