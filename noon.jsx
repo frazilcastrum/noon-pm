@@ -1,25 +1,28 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 /*
   Noon — a living case file for the projects you run and the people you trust.
 
-  Design language: "Guided Path" — one honest question at a time.
-  Creation flows are conversational journeys (waypoints, big tappable choices,
-  a "decide later" on every step). Warm sunrise gradient, pill buttons,
-  rounded geometry, springy-but-subtle motion.
+  Design language: "Tactile Heritage" — a notebook, not a SaaS app.
+  Oatmeal paper, ink structure, growth green reserved for stretch/success,
+  saturated red/amber/green for the semantic traffic-light triad.
+  Capture-first: the home screen is the notebook; parsing and reports are
+  rule-based only (no AI calls). Journey-style creation flows underneath.
 
   Single-file React app. All persistence goes through window.storage
   (get / set / delete / list), single-user keys (shared: false).
 
   Storage layout (one key per related data cluster):
     noon:members            -> Member[]
-    noon:project:<id>       -> { project, assignments, checkIns }
+    noon:logs               -> notebook entries (annotations append-only)
+    noon:project:<id>       -> { project, assignments, checkIns, weekPlans }
 */
 
 /* ============================== storage ============================== */
 
 const MEMBERS_KEY = "noon:members";
 const PROJECT_PREFIX = "noon:project:";
+const LOGS_KEY = "noon:logs";
 
 async function sGet(key) {
   try {
@@ -123,26 +126,26 @@ const STATUS_META = {
     label: "On track",
     phrase: "Moving as planned",
     desc: "steady week",
-    color: "#3D8B63",
-    tint: "#EAF3EE",
+    color: "#1E9E63",
+    tint: "#DFF3E8",
   },
   "at risk": {
     label: "Wobbling",
     phrase: "Wobbling a little",
     desc: "worth keeping an eye on",
-    color: "#D9971E",
-    tint: "#FBF3DF",
+    color: "#E39310",
+    tint: "#FBEFD6",
   },
   blocked: {
     label: "Stuck",
     phrase: "Stuck — needs you",
     desc: "step in this week",
-    color: "#C0564F",
-    tint: "#F9ECEB",
+    color: "#CE3B2C",
+    tint: "#FAE3DF",
   },
 };
 
-const NO_STATUS = { label: "No check-ins yet", color: "#D8CDBC", tint: "#F8F3EA" };
+const NO_STATUS = { label: "No check-ins yet", color: "#C9C0B2", tint: "#EFE8DB" };
 
 const RESP_CARDS = [
   { level: 1, title: "Close guidance", desc: "you review most of what ships" },
@@ -187,247 +190,442 @@ function plannedFor(bundle, assignmentId, weekOf) {
   return a ? a.capacityAllocated : 0;
 }
 
+/* ---------- notebook logs (capture-first) ---------- */
+
+const LOG_META = {
+  core: { label: "Core", desc: "baseline delivery", color: "#5E564A", tint: "#EAE2D4" },
+  stretch: { label: "Stretch", desc: "growth moment", color: "#0C8F58", tint: "#DFF6EA" },
+  redline: { label: "Redline", desc: "capacity risk", color: "#CE3B2C", tint: "#FAE3DF" },
+};
+
+const REDLINE_WORDS = [
+  "late night", "late nights", "overtime", "weekend", "stress", "stressed", "exhaust",
+  "overload", "burn", "burnt", "burned out", "strain", "crunch", "tired", "sick",
+  "12 hours", "dying", "drowning", "overwhelmed", "breaking point",
+];
+const STRETCH_WORDS = [
+  "led ", "lead ", "leading", "independent", "ownership", "initiative", "under pressure",
+  "ambiguity", "mentor", "organised", "organized", "growth", "stretch", "stepped up",
+  "presented", "drove", "unprompted", "beyond", "impressed", "facilitated",
+];
+
+/* Rule-based capture parser — no AI, just honest keyword + name matching.
+   Returns a suggestion the manager confirms or corrects before committing. */
+function parseCapture(text, members, bundles) {
+  const lower = text.toLowerCase();
+
+  let memberId = null;
+  for (const m of members) {
+    const full = m.name.toLowerCase();
+    const first = full.split(/\s+/)[0];
+    if (lower.includes(full) || new RegExp("\\b" + first + "\\b", "i").test(text)) {
+      memberId = m.id;
+      break;
+    }
+  }
+
+  let projectId = null;
+  for (const b of bundles) {
+    if (b.project.status !== "active") continue;
+    if (lower.includes(b.project.name.toLowerCase())) {
+      projectId = b.project.id;
+      break;
+    }
+  }
+
+  let type = "core";
+  if (REDLINE_WORDS.some((w) => lower.includes(w))) type = "redline";
+  else if (STRETCH_WORDS.some((w) => lower.includes(w))) type = "stretch";
+
+  return { memberId, projectId, type };
+}
+
+/* Mine short skill-like phrases out of a pasted JD / kickoff doc. */
+function extractSkills(text) {
+  const found = [];
+  const seen = new Set();
+  for (const chunk of text.split(/[\n,;•·\-–—\/\(\)]+/)) {
+    const t = chunk.trim().replace(/[.:]+$/, "");
+    if (!t || t.length < 3 || t.length > 28) continue;
+    const words = t.split(/\s+/);
+    if (words.length > 3) continue;
+    if (/^\d+$/.test(t)) continue;
+    const key = t.toLowerCase();
+    if (/^(and|or|the|with|for|of|to|a|an|in|on|at|is|are|our|you|we|will|must|have|has|be|as|per|etc|eg|e\.g)$/.test(key)) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push(t);
+    if (found.length >= 14) break;
+  }
+  return found;
+}
+
 /* ============================== styles ============================== */
 
 const CSS = `
-.noon-root{min-height:100vh;background:#FFF9F3;color:#33302B;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;}
+.noon-root{min-height:100vh;background:#F3EDE2;color:#2B2B2B;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;position:relative;}
 .noon-root *{box-sizing:border-box;}
 .noon-root h1,.noon-root h2,.noon-root h3,.noon-root h4{margin:0;line-height:1.3;}
 .noon-root button{font-family:inherit;}
+.paper-noise{position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.028'/%3E%3C/svg%3E");}
 
-.hdr{display:flex;align-items:center;max-width:980px;margin:0 auto;padding:24px 24px 6px;}
-.wordmark{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:#33302B;cursor:pointer;background:none;border:none;padding:0;}
-.wm-dot{background:linear-gradient(135deg,#FF7A1A,#FFB25C);-webkit-background-clip:text;background-clip:text;color:transparent;}
-.nav{margin-left:auto;display:flex;gap:6px;}
-.nav button{border:none;background:none;font-size:14px;font-weight:600;color:#A0937F;padding:7px 16px;border-radius:99px;cursor:pointer;transition:all .15s ease;}
-.nav button:hover{color:#E8590C;}
-.nav button.on{color:#E8590C;background:#FFEFDD;font-weight:700;}
+.hdr{display:flex;align-items:center;max-width:980px;margin:0 auto;padding:22px 24px 6px;position:relative;z-index:1;}
+.wordmark{font-size:22px;font-weight:800;letter-spacing:-0.5px;color:#2B2B2B;cursor:pointer;background:none;border:none;padding:0;}
+.wm-dot{color:#0FA968;}
+.nav{margin-left:auto;display:flex;gap:4px;flex-wrap:wrap;}
+.nav button{border:none;background:none;font-size:13.5px;font-weight:600;color:#9C9284;padding:6px 13px;border-radius:99px;cursor:pointer;transition:all .15s ease;}
+.nav button:hover{color:#2B2B2B;}
+.nav button.on{color:#F6F1E7;background:#2B2B2B;font-weight:700;}
 
-.container{max-width:980px;margin:0 auto;padding:14px 24px 90px;}
-.page-title{font-size:26px;font-weight:800;letter-spacing:-0.4px;margin-top:22px;}
-.page-sub{color:#A0937F;font-size:14.5px;margin:3px 0 24px;}
+.container{max-width:980px;margin:0 auto;padding:14px 24px 90px;position:relative;z-index:1;}
+.page-title{font-size:25px;font-weight:800;letter-spacing:-0.4px;margin-top:20px;}
+.page-sub{color:#9C9284;font-size:14.5px;margin:3px 0 22px;}
 
-.card{background:#fff;border:1.5px solid #F6EBDC;border-radius:20px;padding:22px 24px;box-shadow:0 4px 16px rgba(214,152,88,0.07);}
-.card+.card{margin-top:18px;}
+.card{background:#FBF8F1;border:1px solid #D8D1C7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(80,70,50,0.05),0 3px 10px rgba(80,70,50,0.04);}
+.card+.card{margin-top:16px;}
 .card h3{font-size:16.5px;font-weight:700;margin-bottom:2px;}
-.card .card-sub{color:#A0937F;font-size:13.5px;margin-bottom:14px;}
+.card .card-sub{color:#9C9284;font-size:13.5px;margin-bottom:14px;}
 
-.btn{background:linear-gradient(135deg,#FF7A1A,#FF9A42);color:#fff;border:none;border-radius:99px;padding:10px 24px;font-size:14.5px;font-weight:700;cursor:pointer;box-shadow:0 6px 16px rgba(232,89,12,0.24);transition:transform .16s ease,box-shadow .16s ease;}
-.btn:hover{transform:translateY(-1px);box-shadow:0 9px 22px rgba(232,89,12,0.3);}
+.btn{background:#2B2B2B;color:#F6F1E7;border:none;border-radius:99px;padding:10px 24px;font-size:14px;font-weight:700;cursor:pointer;transition:background .15s ease,transform .15s ease;}
+.btn:hover{background:#1D1B18;transform:translateY(-1px);}
 .btn:active{transform:translateY(0);}
-.btn:disabled{background:#F2E2CE;box-shadow:none;transform:none;cursor:default;}
-.btn2{background:#fff;color:#33302B;border:1.5px solid #F0E2CF;border-radius:99px;padding:9px 20px;font-size:14px;font-weight:600;cursor:pointer;transition:border-color .15s ease,transform .15s ease;}
-.btn2:hover{border-color:#FFB25C;transform:translateY(-1px);}
-.btn-txt{background:none;border:none;font-size:13.5px;font-weight:600;color:#B4A88F;cursor:pointer;padding:4px 6px;border-radius:8px;}
-.btn-txt:hover{color:#E8590C;}
-.btn-danger{background:none;border:none;font-size:13.5px;color:#C6BBA8;cursor:pointer;padding:4px 6px;}
-.btn-danger:hover{color:#C0564F;}
-.btn-danger.armed{color:#C0564F;font-weight:700;}
+.btn:disabled{background:#C9C0B2;cursor:default;transform:none;}
+.btn-green{background:#0FA968;color:#fff;border:none;border-radius:99px;padding:10px 24px;font-size:14px;font-weight:700;cursor:pointer;transition:background .15s ease,transform .15s ease;}
+.btn-green:hover{background:#0B8A55;transform:translateY(-1px);}
+.btn-green:disabled{background:#BFD9CB;cursor:default;transform:none;}
+.btn2{background:#FBF8F1;color:#2B2B2B;border:1.5px solid #C9C0B2;border-radius:99px;padding:9px 20px;font-size:14px;font-weight:600;cursor:pointer;transition:border-color .15s ease;}
+.btn2:hover{border-color:#2B2B2B;}
+.btn-txt{background:none;border:none;font-size:13.5px;font-weight:600;color:#9C9284;cursor:pointer;padding:4px 6px;border-radius:8px;}
+.btn-txt:hover{color:#2B2B2B;}
+.btn-danger{background:none;border:none;font-size:13.5px;color:#B8AE9D;cursor:pointer;padding:4px 6px;}
+.btn-danger:hover{color:#B5544D;}
+.btn-danger.armed{color:#B5544D;font-weight:700;}
 
-.inp,.sel,.ta{width:100%;border:2px solid #F3E8D9;border-radius:14px;padding:11px 15px;font:inherit;font-size:14.5px;color:#33302B;background:#fff;transition:border-color .15s ease,box-shadow .15s ease;}
-.inp:focus,.sel:focus,.ta:focus{outline:none;border-color:#FF8A3D;box-shadow:0 0 0 4px rgba(255,138,61,0.13);}
-.inp::placeholder,.ta::placeholder{color:#C4B69E;}
+.inp,.sel,.ta{width:100%;border:1.5px solid #D8D1C7;border-radius:10px;padding:10px 14px;font:inherit;font-size:14.5px;color:#2B2B2B;background:#FDFBF6;transition:border-color .15s ease,box-shadow .15s ease;}
+.inp:focus,.sel:focus,.ta:focus{outline:none;border-color:#0FA968;box-shadow:0 0 0 3px rgba(15,169,104,0.14);}
+.inp::placeholder,.ta::placeholder{color:#B8AE9D;}
 .ta{resize:vertical;min-height:76px;}
-.inp.mini{width:76px;padding:6px 10px;border-radius:10px;font-size:13.5px;text-align:center;}
+.inp.mini{width:76px;padding:6px 10px;border-radius:8px;font-size:13.5px;text-align:center;}
 .field{margin-bottom:16px;}
-.field>label{display:block;font-size:12px;font-weight:700;color:#C09B79;margin:0 0 6px 6px;letter-spacing:0.02em;}
+.field>label{display:block;font-size:11.5px;font-weight:700;color:#9C9284;text-transform:uppercase;letter-spacing:0.07em;margin:0 0 6px 4px;}
 .frow{display:flex;gap:14px;}
 .frow>.field{flex:1;}
-.label{font-size:11.5px;font-weight:800;color:#C09B79;text-transform:uppercase;letter-spacing:0.08em;}
+.label{font-size:11.5px;font-weight:800;color:#9C9284;text-transform:uppercase;letter-spacing:0.08em;}
 
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex:none;}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:3px 12px;border-radius:99px;white-space:nowrap;}
 .tagrow{display:flex;flex-wrap:wrap;gap:7px;}
-.tag{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;padding:3px 12px;border-radius:99px;background:#FFF3E5;color:#8A6D4E;}
-.tag.stretch{background:linear-gradient(135deg,#FFE9D6,#FFDFC4);color:#C2511A;}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;padding:3px 12px;border-radius:99px;background:#EAE2D4;color:#5E564A;}
+.tag.stretch{background:#DFF6EA;color:#0C8F58;}
 .tag .tag-x{background:none;border:none;cursor:pointer;font-size:13px;line-height:1;padding:0;color:inherit;opacity:0.5;}
 .tag .tag-x:hover{opacity:1;}
-.tag-none{font-size:13px;color:#C4B69E;font-style:italic;}
+.tag-none{font-size:13px;color:#B8AE9D;font-style:italic;}
 
-.av{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#FFE3C4,#FFD1A1);color:#9A6B3C;display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800;flex:none;}
+.av{width:32px;height:32px;border-radius:50%;background:#E7DCC9;color:#6A5D48;display:inline-flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:800;flex:none;}
 .av-stack{display:flex;}
-.av-stack .av{border:2.5px solid #fff;margin-left:-9px;}
+.av-stack .av{border:2.5px solid #FBF8F1;margin-left:-9px;}
 .av-stack .av:first-child{margin-left:0;}
 .av-wrap{position:relative;display:inline-flex;margin-left:-9px;}
 .av-stack .av-wrap:first-child{margin-left:0;}
-.av-wrap .av{margin-left:0;border:2.5px solid #fff;}
-.av-dot{position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-radius:50%;border:2px solid #fff;}
-.pct-warn{display:block;font-size:11.5px;color:#C0564F;font-weight:600;margin-top:4px;animation:fadeUp .2s ease;}
-.fnote{display:flex;align-items:baseline;gap:7px;font-size:13px;color:#6E6455;padding:3px 0;}
-.fnote .fn-date{color:#C4B69E;font-size:12px;white-space:nowrap;}
-.fnote .fn-x{background:none;border:none;color:#D8CDBC;font-size:13px;cursor:pointer;padding:0 3px;line-height:1;}
-.fnote .fn-x:hover{color:#C0564F;}
-.tw-week{display:flex;align-items:center;gap:10px;margin:0 0 20px;}
-.tw-week .inp{max-width:170px;}
-.wknav{background:#fff;border:1.5px solid #F0E2CF;width:34px;height:34px;border-radius:50%;font-size:15px;color:#A0937F;cursor:pointer;transition:all .15s ease;}
-.wknav:hover{color:#E8590C;border-color:#FFB25C;}
-.tw-total{margin-left:auto;font-size:13.5px;color:#8A8071;}
-.tw-total b{color:#33302B;}
-.tw-total .over{color:#C0564F;font-weight:700;}
-.tw-proj{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1.5px solid #FBF2E6;}
-.tw-proj .tw-pname{flex:1;min-width:0;font-weight:600;font-size:14px;background:none;border:none;color:#33302B;text-align:left;cursor:pointer;padding:0;}
-.tw-proj .tw-pname:hover{color:#E8590C;}
-.tw-proj .tw-sub{font-size:12px;color:#A0937F;}
+.av-wrap .av{margin-left:0;border:2.5px solid #FBF8F1;}
+.av-dot{position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-radius:50%;border:2px solid #FBF8F1;}
 
-.tabs{display:flex;gap:6px;margin:20px 0 22px;}
-.tabs button{background:none;border:none;font-size:14px;font-weight:600;color:#A0937F;padding:8px 18px;cursor:pointer;border-radius:99px;transition:all .15s ease;}
-.tabs button:hover{color:#E8590C;}
-.tabs button.on{color:#E8590C;background:#FFEFDD;font-weight:700;}
+.tabs{display:flex;gap:5px;margin:18px 0 20px;flex-wrap:wrap;}
+.tabs button{background:none;border:none;font-size:13.5px;font-weight:600;color:#9C9284;padding:7px 16px;cursor:pointer;border-radius:99px;transition:all .15s ease;}
+.tabs button:hover{color:#2B2B2B;}
+.tabs button.on{color:#F6F1E7;background:#2B2B2B;font-weight:700;}
 
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
 @media(max-width:720px){.grid2{grid-template-columns:1fr;}.frow{flex-direction:column;gap:0;}}
 
-.proj-card{cursor:pointer;transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;}
-.proj-card:hover{transform:translateY(-3px);border-color:#FFD9AE;box-shadow:0 12px 28px rgba(214,152,88,0.14);}
-.proj-card h3{font-size:17px;}
-.proj-desc{color:#8A8071;font-size:14px;margin:6px 0 16px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.proj-card{cursor:pointer;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease;}
+.proj-card:hover{transform:translateY(-2px);border-color:#C9C0B2;box-shadow:0 6px 18px rgba(80,70,50,0.1);}
+.proj-card h3{font-size:16.5px;}
+.proj-desc{color:#6A6357;font-size:14px;margin:6px 0 14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
 .proj-foot{display:flex;align-items:center;gap:10px;}
-.proj-meta{margin-left:auto;font-size:12.5px;color:#C4B69E;text-align:right;}
-.dots{display:flex;gap:5px;align-items:center;}
+.proj-meta{margin-left:auto;font-size:12.5px;color:#B8AE9D;text-align:right;}
 .row{display:flex;align-items:center;gap:12px;}
 
-.hero{background:linear-gradient(150deg,#FFF3E4,#FFE8D0);border:none;text-align:center;padding:52px 40px;}
-.hero h3{font-size:24px;font-weight:800;letter-spacing:-0.4px;margin-bottom:8px;}
-.hero p{color:#A08B72;font-size:15px;max-width:460px;margin:0 auto 24px;}
+.hero{background:#EDE5D4;border-color:#D8D1C7;text-align:center;padding:48px 40px;}
+.hero h3{font-size:23px;font-weight:800;letter-spacing:-0.4px;margin-bottom:8px;}
+.hero p{color:#8A8071;font-size:15px;max-width:460px;margin:0 auto 22px;}
 
-.team-row{display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1.5px solid #FBF2E6;}
+.team-row{display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1px solid #EAE2D4;}
 .team-row:first-of-type{border-top:none;}
 .team-who{min-width:0;flex:1;}
 .team-who .nm{font-weight:700;font-size:14.5px;}
-.team-who .rl{font-size:12.5px;color:#A0937F;}
+.team-who .rl{font-size:12.5px;color:#9C9284;}
 .num{width:78px;text-align:center;}
-.cap-suffix{font-size:13px;color:#A0937F;margin-left:6px;}
+.cap-suffix{font-size:13px;color:#9C9284;margin-left:6px;}
 
 .glance{display:flex;flex-wrap:wrap;gap:10px;}
-.glance-chip{display:flex;align-items:center;gap:10px;background:#FFFBF6;border:1.5px solid #F8EDDD;border-radius:16px;padding:9px 16px;}
+.glance-chip{display:flex;align-items:center;gap:10px;background:#F6F1E7;border:1px solid #E3DACA;border-radius:12px;padding:9px 15px;}
 .glance-chip .gc-name{font-weight:700;font-size:13.5px;line-height:1.35;}
-.glance-chip .gc-sub{font-size:12px;color:#A0937F;line-height:1.35;}
+.glance-chip .gc-sub{font-size:12px;color:#9C9284;line-height:1.35;}
 
 .sgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:6px 0 16px;}
-.scard{background:#fff;border:2px solid #F6EBDC;border-radius:16px;padding:13px 14px;text-align:center;cursor:pointer;transition:all .18s ease;}
-.scard:hover{border-color:#FFD9AE;}
-.scard.sel{border-color:#FF8A3D;box-shadow:0 8px 20px rgba(232,89,12,0.14);transform:translateY(-2px);}
+.scard{background:#FDFBF6;border:1.5px solid #D8D1C7;border-radius:12px;padding:12px 14px;text-align:center;cursor:pointer;transition:all .16s ease;}
+.scard:hover{border-color:#C9C0B2;}
+.scard.sel{border-color:#0FA968;background:#FBF8F1;box-shadow:0 4px 12px rgba(15,169,104,0.12);transform:translateY(-2px);}
 .scard h5{margin:6px 0 2px;font-size:13.5px;font-weight:700;}
-.scard p{margin:0;font-size:11.5px;color:#B4A88F;line-height:1.4;}
+.scard p{margin:0;font-size:11.5px;color:#B8AE9D;line-height:1.4;}
 @media(max-width:640px){.sgrid{grid-template-columns:1fr;}}
 
-.ci-hist{margin-top:16px;border-top:1.5px solid #FBF2E6;padding-top:12px;}
-.ci-hist-row{display:flex;align-items:baseline;gap:9px;font-size:13.5px;padding:3px 0;color:#8A8071;}
-.ci-hist-row .whn{color:#C4B69E;font-size:12.5px;white-space:nowrap;min-width:88px;}
+.ci-hist{margin-top:16px;border-top:1px solid #EAE2D4;padding-top:12px;}
+.ci-hist-row{display:flex;align-items:baseline;gap:9px;font-size:13.5px;padding:3px 0;color:#6A6357;}
+.ci-hist-row .whn{color:#B8AE9D;font-size:12.5px;white-space:nowrap;min-width:88px;}
 
-.wk{padding:16px 0;border-top:1.5px solid #FBF2E6;}
+.wk{padding:16px 0;border-top:1px solid #EAE2D4;}
 .wk:first-of-type{border-top:none;padding-top:4px;}
-.wk h4{font-size:12.5px;font-weight:800;color:#C09B79;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;}
+.wk h4{font-size:12.5px;font-weight:800;color:#9C9284;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px;}
 .wk-entry{display:flex;align-items:baseline;gap:10px;padding:4px 0;font-size:14px;}
 .wk-entry .who{font-weight:700;white-space:nowrap;}
-.wk-entry .cap{color:#C4B69E;font-size:12.5px;white-space:nowrap;}
-.wk-entry .txt{color:#6E6455;}
+.wk-entry .cap{color:#B8AE9D;font-size:12.5px;white-space:nowrap;}
+.wk-entry .txt{color:#5E564A;font-family:Georgia,'Times New Roman',serif;}
 
 .trust{display:flex;flex-direction:column;gap:13px;margin-top:14px;}
 .trust-sec .label{display:block;margin-bottom:6px;}
 .trust-line{font-size:14px;}
-.trust-sub{font-size:12.5px;color:#A0937F;}
+.trust-sub{font-size:12.5px;color:#9C9284;}
 .resp-dots{display:flex;gap:4px;align-items:center;margin:4px 0 3px;}
-.resp-dots i{width:16px;height:7px;border-radius:4px;background:#F6EBDC;}
-.resp-dots i.f{background:linear-gradient(135deg,#FF7A1A,#FFB25C);}
-.mini-label{font-size:12px;color:#A0937F;font-weight:700;margin-right:6px;}
+.resp-dots i{width:16px;height:7px;border-radius:4px;background:#E3DACA;}
+.resp-dots i.f{background:#0FA968;}
+.mini-label{font-size:12px;color:#9C9284;font-weight:700;margin-right:6px;}
 
-.alloc-bar{position:relative;display:flex;height:6px;border-radius:3px;background:#F8EDDD;margin:9px 0 7px;}
+.alloc-bar{position:relative;display:flex;height:6px;border-radius:3px;background:#E3DACA;margin:9px 0 7px;}
 .alloc-bar i{display:block;height:100%;}
-.alloc-bar .ab-base{border-radius:3px 0 0 3px;background:linear-gradient(90deg,#FF7A1A,#FFB25C);}
+.alloc-bar .ab-base{border-radius:3px 0 0 3px;background:#2B2B2B;}
 .alloc-bar .ab-base.only{border-radius:3px;}
-.alloc-bar .ab-over{background:#C0564F;border-radius:0 3px 3px 0;}
-.alloc-bar .ab-tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:#FFF9F3;border-radius:1px;}
-.alloc-note{font-size:13px;color:#A0937F;}
-.alloc-over{color:#C0564F;font-weight:700;}
+.alloc-bar .ab-over{background:#9E2B1E;border-radius:0 3px 3px 0;}
+.alloc-bar .ab-tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:#F3EDE2;border-radius:1px;}
+.alloc-note{font-size:13px;color:#9C9284;}
+.alloc-over{color:#B5544D;font-weight:700;}
 .member-card h3{font-size:15.5px;}
-.stat-row{display:flex;gap:14px;flex-wrap:wrap;font-size:13.5px;color:#6E6455;margin-top:8px;}
+.stat-row{display:flex;gap:14px;flex-wrap:wrap;font-size:13.5px;color:#5E564A;margin-top:8px;}
 .stat-row b{font-weight:700;}
-.subtle-list{font-size:13px;color:#A0937F;margin-top:6px;}
-.quote{font-size:13.5px;color:#8A8071;font-style:italic;margin-top:8px;}
+.subtle-list{font-size:13px;color:#9C9284;margin-top:6px;}
+.quote{font-size:13.5px;color:#6A6357;font-style:italic;font-family:Georgia,'Times New Roman',serif;margin-top:8px;}
 
-.empty{padding:40px 30px;text-align:center;}
+.empty{padding:38px 30px;text-align:center;}
 .empty h3{font-size:17px;margin-bottom:6px;}
-.empty p{color:#A0937F;font-size:14px;max-width:460px;margin:0 auto 18px;}
-.section-head{display:flex;align-items:baseline;margin:28px 0 14px;}
+.empty p{color:#9C9284;font-size:14px;max-width:460px;margin:0 auto 18px;}
+.section-head{display:flex;align-items:baseline;margin:26px 0 13px;}
 .section-head h2{font-size:17px;font-weight:800;letter-spacing:-0.2px;}
-.section-head .btn2,.section-head .btn{margin-left:auto;}
-.back{background:none;border:none;font-size:13.5px;font-weight:600;color:#B4A88F;cursor:pointer;padding:0;margin-top:20px;}
-.back:hover{color:#E8590C;}
-.saved-note{font-size:13px;color:#3D8B63;font-weight:700;margin-right:auto;animation:fadeUp .25s ease;}
+.section-head .btn2,.section-head .btn,.section-head .viewtoggle{margin-left:auto;}
+.back{background:none;border:none;font-size:13.5px;font-weight:600;color:#B8AE9D;cursor:pointer;padding:0;margin-top:20px;}
+.back:hover{color:#2B2B2B;}
+.saved-note{font-size:13px;color:#0B7A4B;font-weight:700;margin-right:auto;animation:fadeUp .25s ease;}
 .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;align-items:center;}
+.pct-warn{display:block;font-size:11.5px;color:#B5544D;font-weight:600;margin-top:4px;animation:fadeUp .2s ease;}
 
 /* ---------- journey overlay ---------- */
-.jov{position:fixed;inset:0;z-index:60;background:linear-gradient(165deg,#FFF9F2 0%,#FFF1E1 100%);overflow:auto;animation:jovIn .28s ease;}
+.jov{position:fixed;inset:0;z-index:60;background:linear-gradient(170deg,#F6F1E7 0%,#EDE5D4 100%);overflow:auto;animation:jovIn .25s ease;}
 .jov-in{max-width:740px;margin:0 auto;padding:24px 24px 64px;min-height:100%;display:flex;flex-direction:column;}
 .jov-top{display:flex;align-items:center;margin-bottom:10px;}
-.jov-eyebrow{font-size:12px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#D3B591;}
-.jov-x{margin-left:auto;background:#fff;border:1.5px solid #F0E2CF;width:36px;height:36px;border-radius:50%;font-size:17px;line-height:1;color:#B4A88F;cursor:pointer;transition:all .15s ease;}
-.jov-x:hover{color:#E8590C;border-color:#FFB25C;}
-
+.jov-eyebrow{font-size:12px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#B8AE9D;}
+.jov-x{margin-left:auto;background:#FBF8F1;border:1.5px solid #C9C0B2;width:36px;height:36px;border-radius:50%;font-size:17px;line-height:1;color:#9C9284;cursor:pointer;transition:all .15s ease;}
+.jov-x:hover{color:#2B2B2B;border-color:#2B2B2B;}
 .path{display:flex;align-items:flex-start;justify-content:center;margin:14px 0 6px;}
 .wp{display:flex;flex-direction:column;align-items:center;gap:7px;width:104px;background:none;border:none;padding:0;cursor:default;}
-.wp .node{width:14px;height:14px;border-radius:50%;background:#F0E2CF;transition:all .2s ease;}
+.wp .node{width:14px;height:14px;border-radius:50%;background:#D8D1C7;transition:all .2s ease;}
 .wp.done{cursor:pointer;}
-.wp.done .node{background:#FF8A3D;}
-.wp.now .node{background:linear-gradient(135deg,#FF7A1A,#FFB25C);box-shadow:0 0 0 6px rgba(255,138,61,0.18);}
-.wp .wlbl{font-size:11.5px;font-weight:700;color:#C4B69E;}
-.wp.now .wlbl{color:#E8590C;}
-.wp.done .wlbl{color:#B49878;}
-.seg{height:3px;width:58px;background:#F0E2CF;border-radius:2px;margin-top:6px;flex:none;}
-.seg.done{background:#FFB25C;}
-
+.wp.done .node{background:#2B2B2B;}
+.wp.now .node{background:#0FA968;box-shadow:0 0 0 6px rgba(15,169,104,0.16);}
+.wp .wlbl{font-size:11.5px;font-weight:700;color:#B8AE9D;}
+.wp.now .wlbl{color:#0B7A4B;}
+.wp.done .wlbl{color:#6A6357;}
+.seg{height:3px;width:58px;background:#D8D1C7;border-radius:2px;margin-top:6px;flex:none;}
+.seg.done{background:#2B2B2B;}
 .jbody{flex:1;animation:stepIn .3s cubic-bezier(.22,.9,.35,1.08);}
-.jq{text-align:center;font-size:26px;font-weight:800;letter-spacing:-0.5px;margin:28px 0 8px;}
-.jsub{text-align:center;font-size:14.5px;color:#A0937F;margin:0 auto 28px;max-width:440px;}
+.jq{text-align:center;font-size:25px;font-weight:800;letter-spacing:-0.5px;margin:26px 0 8px;}
+.jsub{text-align:center;font-size:14.5px;color:#9C9284;margin:0 auto 26px;max-width:460px;}
 .jfield{max-width:460px;margin:0 auto 16px;}
-.jfield>label{display:block;font-size:12px;font-weight:700;color:#C09B79;margin:0 0 6px 8px;}
-.jfield .inp,.jfield .ta{font-size:16px;padding:13px 17px;}
+.jfield>label{display:block;font-size:12px;font-weight:700;color:#9C9284;margin:0 0 6px 6px;}
+.jfield .inp,.jfield .ta{font-size:16px;padding:12px 16px;}
 .jrow{display:flex;gap:14px;max-width:460px;margin:0 auto 16px;}
-.jrow .jfield{flex:1;margin:0 0 0;}
-.jfoot{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:36px;}
-.skip{background:none;border:none;color:#B4A88F;font-size:13.5px;font-weight:600;cursor:pointer;padding:6px;}
-.skip:hover{color:#E8590C;}
-.jsteplbl{text-align:center;font-size:12.5px;color:#C4B69E;margin-top:16px;}
+.jrow .jfield{flex:1;margin:0;}
+.jfoot{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:34px;}
+.skip{background:none;border:none;color:#9C9284;font-size:13.5px;font-weight:600;cursor:pointer;padding:6px;}
+.skip:hover{color:#0B7A4B;}
+.jsteplbl{text-align:center;font-size:12.5px;color:#B8AE9D;margin-top:16px;}
 
 .rgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;max-width:660px;margin:0 auto;}
 @media(max-width:680px){.rgrid{grid-template-columns:repeat(2,1fr);}}
-.ccard{background:#fff;border:2px solid #F3E8D9;border-radius:16px;padding:14px 10px;text-align:center;cursor:pointer;transition:all .18s ease;}
-.ccard:hover{border-color:#FFD9AE;}
-.ccard.sel{border-color:#FF8A3D;box-shadow:0 10px 24px rgba(232,89,12,0.15);transform:translateY(-3px);}
+.ccard{background:#FBF8F1;border:1.5px solid #D8D1C7;border-radius:12px;padding:14px 10px;text-align:center;cursor:pointer;transition:all .16s ease;}
+.ccard:hover{border-color:#C9C0B2;}
+.ccard.sel{border-color:#0FA968;box-shadow:0 4px 14px rgba(15,169,104,0.14);transform:translateY(-2px);}
 .ccard h4{font-size:13px;font-weight:700;line-height:1.3;}
-.ccard p{font-size:11px;color:#B4A88F;margin:4px 0 0;line-height:1.4;}
-.ccard .ic{width:26px;height:26px;border-radius:9px;margin:0 auto 9px;background:#F8EDDD;transition:all .18s ease;}
-.ccard.sel .ic{background:linear-gradient(135deg,#FF7A1A,#FFB25C);}
+.ccard p{font-size:11px;color:#B8AE9D;margin:4px 0 0;line-height:1.4;}
+.ccard .ic{width:24px;height:24px;border-radius:8px;margin:0 auto 9px;background:#E3DACA;transition:all .16s ease;}
+.ccard.sel .ic{background:#0FA968;}
 
-.yrsrow{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:26px;font-size:14.5px;color:#8A8071;}
-.yrsrow .bucket{font-weight:700;color:#E8590C;}
+.yrsrow{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:26px;font-size:14.5px;color:#6A6357;flex-wrap:wrap;}
+.yrsrow .bucket{font-weight:700;color:#0B7A4B;}
 
 .capchips{display:flex;flex-wrap:wrap;gap:8px;}
-.chip-btn{background:#fff;border:2px solid #F3E8D9;border-radius:99px;padding:6px 14px;font-size:13px;font-weight:600;color:#8A8071;cursor:pointer;transition:all .15s ease;}
-.chip-btn b{font-weight:800;color:#33302B;}
-.chip-btn:hover{border-color:#FFD9AE;}
-.chip-btn.on{border-color:#FF8A3D;background:#FFF3E5;color:#C2511A;}
-.chip-btn.on b{color:#C2511A;}
+.chip-btn{background:#FBF8F1;border:1.5px solid #D8D1C7;border-radius:99px;padding:6px 14px;font-size:13px;font-weight:600;color:#6A6357;cursor:pointer;transition:all .15s ease;}
+.chip-btn b{font-weight:800;color:#2B2B2B;}
+.chip-btn:hover{border-color:#C9C0B2;}
+.chip-btn.on{border-color:#0FA968;background:#E2F5EB;color:#0B7A4B;}
+.chip-btn.on b{color:#0B7A4B;}
 .capwrap{display:flex;flex-direction:column;gap:10px;align-items:center;}
-.capcustom{font-size:13px;color:#A0937F;display:flex;align-items:center;gap:7px;}
+.capcustom{font-size:13px;color:#9C9284;display:flex;align-items:center;gap:7px;}
 
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:620px;margin:0 auto;}
 @media(max-width:640px){.pgrid{grid-template-columns:1fr;}}
-.pcard{background:#fff;border:2px solid #F3E8D9;border-radius:16px;padding:13px 16px;cursor:pointer;transition:all .18s ease;text-align:left;}
-.pcard:hover{border-color:#FFD9AE;}
-.pcard.sel{border-color:#FF8A3D;box-shadow:0 8px 20px rgba(232,89,12,0.13);}
+.pcard{background:#FBF8F1;border:1.5px solid #D8D1C7;border-radius:12px;padding:13px 16px;cursor:pointer;transition:all .16s ease;text-align:left;}
+.pcard:hover{border-color:#C9C0B2;}
+.pcard.sel{border-color:#0FA968;box-shadow:0 4px 12px rgba(15,169,104,0.12);}
 .pcard .pnm{font-weight:700;font-size:14px;}
-.pcard .prl{font-size:12.5px;color:#A0937F;}
-.pcard .ptick{margin-left:auto;width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FF7A1A,#FFB25C);color:#fff;font-size:12px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.pcard .prl{font-size:12.5px;color:#9C9284;}
+.pcard .ptick{margin-left:auto;width:22px;height:22px;border-radius:50%;background:#0FA968;color:#fff;font-size:12px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none;}
 .pcard .pcaps{margin-top:11px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;animation:fadeUp .2s ease;}
 .pcard .pcaps .chip-btn{padding:4px 11px;font-size:12px;}
+
+/* ---------- field notes / notebook rows ---------- */
+.fnote{display:flex;align-items:baseline;gap:7px;font-size:13px;color:#5E564A;padding:3px 0;}
+.fnote .fn-date{color:#B8AE9D;font-size:12px;white-space:nowrap;}
+.fnote .fn-x{background:none;border:none;color:#C9C0B2;font-size:13px;cursor:pointer;padding:0 3px;line-height:1;}
+.fnote .fn-x:hover{color:#B5544D;}
+
+.logrow{padding:12px 0;border-top:1px solid #EAE2D4;}
+.logrow:first-of-type{border-top:none;}
+.logrow .lg-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px;}
+.logrow .lg-who{font-weight:700;font-size:13.5px;}
+.logrow .lg-date{font-size:12px;color:#B8AE9D;}
+.logrow .lg-tag{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:800;letter-spacing:0.02em;padding:2px 10px;border-radius:99px;border:1px solid rgba(43,43,43,0.08);}
+.logrow .lg-txt{font-family:Georgia,'Times New Roman',serif;font-size:14.5px;color:#3D372E;line-height:1.55;}
+.logrow .lg-ann{margin:6px 0 0 14px;padding-left:12px;border-left:2px solid #E3DACA;font-size:13px;color:#6A6357;font-family:Georgia,'Times New Roman',serif;}
+.logrow .lg-ann .fn-date{margin-right:6px;}
+.logrow .lg-actions{display:flex;gap:10px;margin-top:5px;}
+.logrow .lg-actions button{background:none;border:none;font-size:12px;font-weight:600;color:#B8AE9D;cursor:pointer;padding:0;}
+.logrow .lg-actions button:hover{color:#2B2B2B;}
+.logrow .lg-annin{margin-top:7px;}
+
+/* ---------- capture (home) ---------- */
+.cap-card{background:#FBF8F1;border:1px solid #D8D1C7;border-radius:14px;padding:20px 22px;box-shadow:0 1px 2px rgba(80,70,50,0.05),0 3px 10px rgba(80,70,50,0.04);}
+.cap-ta{width:100%;border:none;background:transparent;font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:1.7;color:#2B2B2B;resize:vertical;min-height:84px;padding:2px;}
+.cap-ta:focus{outline:none;}
+.cap-ta::placeholder{color:#B8AE9D;font-style:italic;}
+.cap-rule{height:1px;background:#E3DACA;margin:10px 0 14px;}
+.cap-group{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:9px;}
+.cap-group-label{font-size:11px;font-weight:800;color:#B8AE9D;text-transform:uppercase;letter-spacing:0.08em;width:56px;flex:none;}
+.cap-chip{background:#F6F1E7;border:1.5px solid transparent;border-radius:99px;padding:3px 12px;font-size:12.5px;font-weight:600;color:#6A6357;cursor:pointer;transition:all .13s ease;}
+.cap-chip:hover{border-color:#C9C0B2;}
+.cap-chip.on{border-color:#2B2B2B;background:#2B2B2B;color:#F6F1E7;}
+.cap-chip.on.t-stretch{background:#0C8F58;border-color:#0C8F58;color:#fff;}
+.cap-chip.on.t-redline{background:#CE3B2C;border-color:#CE3B2C;color:#fff;}
+.cap-foot{display:flex;align-items:center;gap:12px;margin-top:14px;}
+.cap-hint{font-size:12.5px;color:#B8AE9D;flex:1;}
+.mic-btn{display:inline-flex;align-items:center;gap:8px;background:#FBF8F1;border:1.5px solid #C9C0B2;border-radius:99px;padding:8px 16px;font-size:13px;font-weight:700;color:#5E564A;cursor:pointer;transition:all .15s ease;}
+.mic-btn:hover{border-color:#2B2B2B;color:#2B2B2B;}
+.mic-btn.rec{background:#FAE3DF;border-color:#CE3B2C;color:#CE3B2C;}
+.mic-btn .mic-dot{width:9px;height:9px;border-radius:50%;background:#9C9284;flex:none;}
+.mic-btn.rec .mic-dot{background:#CE3B2C;animation:pulse-dot 1.2s ease-in-out infinite;}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.45;transform:scale(0.75);}}
+.alert-row{display:flex;align-items:baseline;gap:10px;padding:8px 0;font-size:14px;border-top:1px solid #EAE2D4;}
+.alert-row:first-of-type{border-top:none;padding-top:2px;}
+.alert-row .al-txt{color:#5E564A;flex:1;}
+.alert-row .al-link{background:none;border:none;font-size:12.5px;font-weight:700;color:#9C9284;cursor:pointer;padding:0;white-space:nowrap;}
+.alert-row .al-link:hover{color:#2B2B2B;}
+.linkgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px;}
+@media(max-width:720px){.linkgrid{grid-template-columns:1fr 1fr;}}
+.linkcard{background:#FBF8F1;border:1px solid #D8D1C7;border-radius:14px;padding:16px 18px;cursor:pointer;text-align:left;transition:all .16s ease;}
+.linkcard:hover{transform:translateY(-2px);border-color:#2B2B2B;}
+.linkcard .lc-num{font-size:22px;font-weight:800;letter-spacing:-0.5px;display:block;}
+.linkcard .lc-name{font-size:13.5px;font-weight:700;display:block;margin-top:2px;}
+.linkcard .lc-sub{font-size:11.5px;color:#9C9284;display:block;}
+
+/* ---------- this week ---------- */
+.tw-week{display:flex;align-items:center;gap:10px;margin:0 0 20px;flex-wrap:wrap;}
+.tw-week .inp{max-width:170px;}
+.wknav{background:#FBF8F1;border:1.5px solid #C9C0B2;width:34px;height:34px;border-radius:50%;font-size:15px;color:#9C9284;cursor:pointer;transition:all .15s ease;}
+.wknav:hover{color:#2B2B2B;border-color:#2B2B2B;}
+.tw-total{margin-left:auto;font-size:13.5px;color:#6A6357;}
+.tw-total b{color:#2B2B2B;}
+.tw-total .over{color:#B5544D;font-weight:700;}
+.tw-proj{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #EAE2D4;}
+.tw-proj .tw-pname{flex:1;min-width:0;font-weight:600;font-size:14px;background:none;border:none;color:#2B2B2B;text-align:left;cursor:pointer;padding:0;}
+.tw-proj .tw-pname:hover{color:#0B7A4B;}
+.tw-proj .tw-sub{font-size:12px;color:#9C9284;}
+
+/* ---------- timeline ---------- */
+.viewtoggle{display:inline-flex;gap:3px;background:#EDE5D4;border-radius:99px;padding:3px;}
+.viewtoggle button{background:none;border:none;font-size:12.5px;font-weight:700;color:#9C9284;padding:4px 14px;border-radius:99px;cursor:pointer;}
+.viewtoggle button.on{background:#2B2B2B;color:#F6F1E7;}
+.tl-wrap{overflow-x:auto;padding-bottom:6px;}
+.tl-grid{min-width:640px;}
+.tl-headrow,.tl-row{display:flex;align-items:center;}
+.tl-name{width:150px;flex:none;font-size:13px;font-weight:700;padding:8px 10px 8px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tl-name.dim{color:#B8AE9D;font-weight:600;}
+.tl-cell{width:36px;flex:none;display:flex;align-items:center;justify-content:center;height:34px;position:relative;}
+.tl-cell .tl-track{position:absolute;left:0;right:0;top:50%;height:8px;transform:translateY(-50%);background:#EAE2D4;}
+.tl-cell .tl-track.start{border-radius:4px 0 0 4px;left:4px;}
+.tl-cell .tl-track.end{border-radius:0 4px 4px 0;right:4px;}
+.tl-cell .dot{position:relative;z-index:1;}
+.tl-hd{width:36px;flex:none;font-size:9.5px;color:#B8AE9D;text-align:center;font-weight:700;padding-bottom:4px;white-space:nowrap;}
+.tl-cell.now{background:rgba(15,169,104,0.07);border-radius:6px;}
+.tl-legend{display:flex;gap:16px;margin-top:12px;font-size:12px;color:#9C9284;align-items:center;flex-wrap:wrap;}
+
+/* ---------- reports ---------- */
+.rep-pick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+.rep-out{width:100%;border:1.5px solid #D8D1C7;border-radius:12px;background:#FDFBF6;font-family:Georgia,'Times New Roman',serif;font-size:14px;line-height:1.65;color:#2B2B2B;padding:16px 18px;min-height:340px;resize:vertical;}
+.rep-out:focus{outline:none;border-color:#0FA968;box-shadow:0 0 0 3px rgba(15,169,104,0.12);}
+.rep-note{font-size:12.5px;color:#9C9284;margin-top:8px;}
+
+/* ---------- JD mining ---------- */
+.jd-toggle{display:block;margin:2px auto 0;background:none;border:none;font-size:13px;font-weight:600;color:#9C9284;cursor:pointer;text-decoration:underline;text-underline-offset:3px;}
+.jd-toggle:hover{color:#0B7A4B;}
+.jd-suggest{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;justify-content:center;}
+
+/* ---------- vitals bar ---------- */
+.vitals{background:#2B2B2B;position:relative;z-index:1;margin-top:10px;}
+.vitals-in{max-width:980px;margin:0 auto;padding:7px 16px;display:flex;gap:8px;overflow-x:auto;}
+.vital{display:flex;align-items:center;gap:8px;background:rgba(246,241,231,0.09);border:1.5px solid rgba(246,241,231,0.28);border-radius:99px;padding:6px 14px;cursor:pointer;white-space:nowrap;transition:all .15s ease;box-shadow:0 1px 3px rgba(0,0,0,0.25);}
+.vital:hover{background:rgba(246,241,231,0.18);border-color:rgba(246,241,231,0.55);transform:translateY(-1px);}
+.vital:active{transform:translateY(0);}
+.vital .vt-label{font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:rgba(246,241,231,0.55);}
+.vital .vt-value{font-size:13px;font-weight:800;color:#F6F1E7;}
+.vital .vt-go{font-size:14px;font-weight:800;color:rgba(246,241,231,0.5);margin-left:2px;transition:transform .15s ease,color .15s ease;}
+.vital:hover .vt-go{color:#F6F1E7;transform:translateX(2px);}
+.vt-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid #EAE2D4;}
+.vt-row:first-of-type{border-top:none;}
+.vt-row .vt-who{flex:1;min-width:0;}
+.vt-row .vt-nm{font-weight:700;font-size:14px;}
+.vt-row .vt-rl{font-size:12px;color:#9C9284;}
+.vt-band{font-size:12.5px;color:#9C9284;margin-top:2px;}
+.vt-banner{background:#FAE3DF;border:1.5px solid rgba(206,59,44,0.35);border-radius:12px;padding:12px 16px;margin-bottom:14px;}
+.vt-banner .vb-title{font-size:12px;font-weight:800;letter-spacing:0.07em;text-transform:uppercase;color:#CE3B2C;}
+.vt-banner .vb-sub{font-size:13px;color:#8A453C;line-height:1.5;margin-top:2px;}
+.vt-gauge-labels{display:flex;justify-content:space-between;font-size:11px;color:#9C9284;font-weight:600;margin-top:2px;}
+.load-pill{display:inline-block;font-size:12px;font-weight:800;padding:2px 10px;border-radius:8px;white-space:nowrap;}
+.pcat{display:inline-flex;align-items:center;font-size:10px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;padding:2px 10px;border-radius:6px;background:#DFF6EA;color:#0C8F58;border:1px solid rgba(12,143,88,0.3);white-space:nowrap;}
+.pc-needs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:2px 0 4px;}
+.pc-team{margin-top:10px;border-top:1px solid #EAE2D4;padding-top:9px;display:flex;flex-direction:column;gap:5px;}
+.pc-person{display:flex;align-items:center;gap:8px;font-size:13px;}
+.pc-person .pc-nm{font-weight:700;}
+.pc-person .pc-status{color:#9C9284;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 @keyframes jovIn{from{opacity:0;}to{opacity:1;}}
 @keyframes stepIn{from{opacity:0;transform:translateX(26px);}to{opacity:1;transform:none;}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(5px);}to{opacity:1;transform:none;}}
 @media (prefers-reduced-motion: reduce){
   .noon-root *,.jov,.jbody{animation:none !important;transition:none !important;}
+}
+
+/* ---------- mobile ---------- */
+@media(max-width:640px){
+  .hdr{padding:16px 16px 4px;flex-wrap:wrap;gap:6px;}
+  .nav{margin-left:auto;}
+  .nav button{font-size:12px;padding:5px 10px;}
+  .container{padding:10px 16px 80px;}
+  .page-title{font-size:22px;}
+  .card{padding:16px 16px;}
+  .cap-ta{min-height:110px;font-size:16px;}
+  .cap-group-label{width:100%;}
+  .team-row{flex-wrap:wrap;}
+  .btn,.btn-green,.btn2{padding:11px 22px;}
+  .linkcard .lc-num{font-size:19px;}
 }
 `;
 
@@ -568,8 +766,14 @@ function PctInput({ id, value, onCommit, mini }) {
   );
 }
 
-/* Allocation bar that can show overload: fills past the 100% tick in red
-   instead of quietly capping. */
+/* Load-colored allocation bar: green when healthy, amber when loaded, red
+   past 100% — the overflow draws beyond the tick, never capped. */
+function loadColor(total) {
+  return total > 100 ? "#CE3B2C" : total > 75 ? "#E39310" : "#1E9E63";
+}
+function loadTint(total) {
+  return total > 100 ? "#FAE3DF" : total > 75 ? "#FBEFD6" : "#DFF3E8";
+}
 function AllocBar({ total }) {
   const scale = Math.max(total, 100);
   const base = Math.min(total, 100);
@@ -577,7 +781,7 @@ function AllocBar({ total }) {
     <div className="alloc-bar">
       <i
         className={"ab-base" + (total <= 100 ? " only" : "")}
-        style={{ width: (base / scale) * 100 + "%" }}
+        style={{ width: (base / scale) * 100 + "%", background: loadColor(total) }}
       />
       {total > 100 && <i className="ab-over" style={{ width: ((total - 100) / scale) * 100 + "%" }} />}
       {total > 100 && <span className="ab-tick" style={{ left: (100 / scale) * 100 + "%" }} />}
@@ -746,6 +950,9 @@ function MemberJourney({ member, onSave, onClose }) {
   const [resp, setResp] = useState(member ? member.responsibilityLevel : 3);
   const [core, setCore] = useState(member ? member.coreCompetencies || [] : []);
   const [stretch, setStretch] = useState(member ? member.stretchCompetencies || [] : []);
+  const [jdOpen, setJdOpen] = useState(false);
+  const [jd, setJd] = useState("");
+  const jdSkills = useMemo(() => (jd.trim() ? extractSkills(jd) : []), [jd]);
 
   const first = firstName(name);
 
@@ -855,6 +1062,46 @@ function MemberJourney({ member, onSave, onClose }) {
               placeholder="Type a skill, press Enter…"
             />
           </div>
+          <button type="button" className="jd-toggle" onClick={() => setJdOpen(!jdOpen)}>
+            {jdOpen ? "hide the JD miner" : "…or paste their JD and mine it for skills"}
+          </button>
+          {jdOpen && (
+            <div className="jfield" style={{ marginTop: 12 }}>
+              <textarea
+                id="m-jd"
+                className="ta"
+                value={jd}
+                onChange={(e) => setJd(e.target.value)}
+                placeholder="Paste the job description or role doc here…"
+              />
+              {jdSkills.length > 0 && (
+                <React.Fragment>
+                  <div className="jd-suggest">
+                    {jdSkills.map((s) => {
+                      const inCore = core.some((c) => c.toLowerCase() === s.toLowerCase());
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          className={"chip-btn" + (inCore ? " on" : "")}
+                          onClick={() =>
+                            inCore
+                              ? setCore(core.filter((c) => c.toLowerCase() !== s.toLowerCase()))
+                              : setCore([...core, s])
+                          }
+                        >
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="jsub" style={{ margin: "10px 0 0", fontSize: 12.5 }}>
+                    Tap a phrase to add it to Core — you can retag anything to Stretch later.
+                  </p>
+                </React.Fragment>
+              )}
+            </div>
+          )}
         </React.Fragment>
       )}
 
@@ -957,6 +1204,7 @@ function ProjectJourney({ members, onCreate, onClose }) {
   const [step, setStep] = useState(0);
   const [maxVisited, setMaxVisited] = useState(0);
   const [name, setName] = useState("");
+  const [cat, setCat] = useState("");
   const [desc, setDesc] = useState("");
   const [req, setReq] = useState("");
   const [start, setStart] = useState(toISODate(new Date()));
@@ -967,7 +1215,10 @@ function ProjectJourney({ members, onCreate, onClose }) {
     setMaxVisited((m) => Math.max(m, i));
   };
   const create = () =>
-    onCreate({ name, description: desc, requirements: req, startDate: start }, selections);
+    onCreate(
+      { name, category: cat, description: desc, requirements: req, startDate: start },
+      selections
+    );
   const next = () => (step < 2 ? goto(step + 1) : create());
 
   const nSel = Object.keys(selections).length;
@@ -1025,15 +1276,27 @@ function ProjectJourney({ members, onCreate, onClose }) {
               placeholder="e.g. Q3 service redesign"
             />
           </div>
-          <div className="jfield" style={{ maxWidth: 250 }}>
-            <label htmlFor="p-start">When it kicks off</label>
-            <input
-              id="p-start"
-              className="inp"
-              type="date"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-            />
+          <div className="jrow">
+            <div className="jfield">
+              <label htmlFor="p-cat">What kind of work? (optional)</label>
+              <input
+                id="p-cat"
+                className="inp"
+                value={cat}
+                onChange={(e) => setCat(e.target.value)}
+                placeholder="e.g. Strategy & Ops"
+              />
+            </div>
+            <div className="jfield" style={{ maxWidth: 200 }}>
+              <label htmlFor="p-start">When it kicks off</label>
+              <input
+                id="p-start"
+                className="inp"
+                type="date"
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+              />
+            </div>
           </div>
         </React.Fragment>
       )}
@@ -1062,6 +1325,28 @@ function ProjectJourney({ members, onCreate, onClose }) {
               placeholder="Skills, deliverables, constraints, deadlines…"
             />
           </div>
+          <input
+            type="file"
+            id="p-doc"
+            accept=".txt,.md,text/plain,text/markdown"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files && e.target.files[0];
+              if (!f) return;
+              const r = new FileReader();
+              r.onload = () =>
+                setReq((prev) => (prev ? prev + "\n\n" : "") + String(r.result).slice(0, 4000));
+              r.readAsText(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            className="jd-toggle"
+            onClick={() => document.getElementById("p-doc").click()}
+          >
+            …or upload the kickoff doc (.txt / .md) — it drops straight into the brief
+          </button>
         </React.Fragment>
       )}
 
@@ -1210,9 +1495,962 @@ function TrustCard({ member }) {
   );
 }
 
+/* ============================ notebook log row ============================ */
+
+function LogRow({ log, membersById, projectsById, onAnnotate, onDelete, showWho }) {
+  const [annOpen, setAnnOpen] = useState(false);
+  const [annText, setAnnText] = useState("");
+  const meta = LOG_META[log.type] || LOG_META.core;
+  const m = log.memberId ? membersById[log.memberId] : null;
+  const p = log.projectId ? projectsById[log.projectId] : null;
+  return (
+    <div className="logrow">
+      <div className="lg-meta">
+        {showWho !== false && <span className="lg-who">{m ? m.name : "General"}</span>}
+        <span className="lg-tag" style={{ background: meta.tint, color: meta.color }}>
+          <Dot color={meta.color} /> {meta.label}
+        </span>
+        <span className="lg-date">{p ? p.name : "general"} · {fmtDate(log.date)}</span>
+      </div>
+      <div className="lg-txt">{log.text}</div>
+      {(log.annotations || []).map((a) => (
+        <div className="lg-ann" key={a.id}>
+          <span className="fn-date">{fmtWeek(a.date)}</span>
+          {a.text}
+        </div>
+      ))}
+      <div className="lg-actions">
+        <button type="button" onClick={() => setAnnOpen(!annOpen)}>
+          {annOpen ? "cancel" : "+ add context"}
+        </button>
+        <ConfirmBtn label="delete" confirmLabel="really delete?" onConfirm={() => onDelete(log.id)} />
+      </div>
+      {annOpen && (
+        <div className="lg-annin">
+          <input
+            className="inp"
+            value={annText}
+            placeholder="Add context — this appends underneath, never overwrites. Press Enter."
+            autoFocus
+            onChange={(e) => setAnnText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && annText.trim()) {
+                onAnnotate(log.id, annText);
+                setAnnText("");
+                setAnnOpen(false);
+              }
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================== home ============================== */
+
+function HomePage({ members, bundles, logs, membersById, projectsById, onAddLog, onAnnotate, onDeleteLog, go }) {
+  const [text, setText] = useState("");
+  const [over, setOver] = useState({});
+  const [flash, setFlash] = useState("");
+  const [recording, setRecording] = useState(false);
+  const recRef = useRef(null);
+
+  /* Voice capture via the browser's built-in speech recognition — no cloud
+     service. The button only appears where the API exists; typing is always
+     the fallback. */
+  const SR =
+    typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  const toggleRec = () => {
+    if (recording) {
+      if (recRef.current) recRef.current.stop();
+      return;
+    }
+    try {
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.lang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
+      rec.onresult = (e) => {
+        let t = "";
+        for (let i = e.resultIndex; i < e.results.length; i++)
+          if (e.results[i].isFinal) t += e.results[i][0].transcript;
+        if (t.trim()) setText((prev) => (prev ? prev.trim() + " " : "") + t.trim());
+      };
+      rec.onend = () => setRecording(false);
+      rec.onerror = () => setRecording(false);
+      recRef.current = rec;
+      rec.start();
+      setRecording(true);
+    } catch (e) {
+      setRecording(false);
+    }
+  };
+  useEffect(() => () => {
+    if (recRef.current) recRef.current.stop();
+  }, []);
+
+  const suggestion = useMemo(
+    () => (text.trim() ? parseCapture(text, members, bundles) : { memberId: null, projectId: null, type: "core" }),
+    [text, members, bundles]
+  );
+  const eff = {
+    memberId: over.memberId !== undefined ? over.memberId : suggestion.memberId,
+    projectId: over.projectId !== undefined ? over.projectId : suggestion.projectId,
+    type: over.type !== undefined ? over.type : suggestion.type,
+  };
+
+  const activeBundles = bundles.filter((b) => b.project.status === "active");
+
+  const commit = () => {
+    if (!text.trim()) return;
+    onAddLog({ memberId: eff.memberId, projectId: eff.projectId, type: eff.type, text });
+    const who = eff.memberId && membersById[eff.memberId];
+    setText("");
+    setOver({});
+    // Show what this page just fed — the payoff for logging diligently.
+    setFlash(
+      who
+        ? "Filed ✓ → " + firstName(who.name) + "'s review pack · your next 1:1 · the team brief"
+        : "Filed ✓ → the team brief"
+    );
+    setTimeout(() => setFlash(""), 3200);
+  };
+
+  /* alerts: recent redlines, over-committed people, stuck projects */
+  const cut = new Date();
+  cut.setDate(cut.getDate() - 14);
+  const cutoff = toISODate(cut);
+  const alerts = [];
+  for (const l of logs) {
+    if (l.type === "redline" && l.date >= cutoff) {
+      const who = l.memberId && membersById[l.memberId] ? membersById[l.memberId].name : "Someone";
+      alerts.push({
+        color: LOG_META.redline.color,
+        text: who + " — redline: “" + l.text + "”",
+        page: { name: "roster" },
+      });
+    }
+  }
+  for (const m of members) {
+    let total = 0;
+    let n = 0;
+    for (const b of activeBundles)
+      for (const a of b.assignments)
+        if (a.memberId === m.id) {
+          total += Number(a.capacityAllocated) || 0;
+          n++;
+        }
+    if (total > 100)
+      alerts.push({
+        color: LOG_META.redline.color,
+        text: m.name + " is committed at " + total + "% across " + n + " projects — stretched thin",
+        page: { name: "week" },
+      });
+  }
+  for (const b of activeBundles)
+    for (const a of b.assignments) {
+      const latest = latestCheckIn(b.checkIns, a.id);
+      if (latest && latest.progressStatus === "blocked") {
+        const who = membersById[a.memberId];
+        alerts.push({
+          color: STATUS_META.blocked.color,
+          text: (who ? who.name : "Someone") + " is stuck on " + b.project.name,
+          page: { name: "project", id: b.project.id, tab: "progression" },
+        });
+      }
+    }
+
+  const peopleOnActive = new Set();
+  for (const b of activeBundles) for (const a of b.assignments) peopleOnActive.add(a.memberId);
+
+  return (
+    <div>
+      <h1 className="page-title">The notebook</h1>
+      <p className="page-sub">Jot what you noticed — noon files it. That's the whole habit.</p>
+
+      <div className="cap-card">
+        <textarea
+          id="cap-text"
+          className="cap-ta"
+          value={text}
+          placeholder="What did you notice? e.g. “Aisha ran the pricing workshop unprompted — handled the CFO's pushback well.”"
+          onChange={(e) => setText(e.target.value)}
+        />
+        <div className="cap-rule" />
+        <div className="cap-group">
+          <span className="cap-group-label">Who</span>
+          {members.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={"cap-chip" + (eff.memberId === m.id ? " on" : "")}
+              onClick={() => setOver({ ...over, memberId: eff.memberId === m.id ? null : m.id })}
+            >
+              {firstName(m.name)}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={"cap-chip" + (eff.memberId == null ? " on" : "")}
+            onClick={() => setOver({ ...over, memberId: null })}
+          >
+            no one specific
+          </button>
+        </div>
+        <div className="cap-group">
+          <span className="cap-group-label">Where</span>
+          {activeBundles.map((b) => (
+            <button
+              key={b.project.id}
+              type="button"
+              className={"cap-chip" + (eff.projectId === b.project.id ? " on" : "")}
+              onClick={() =>
+                setOver({ ...over, projectId: eff.projectId === b.project.id ? null : b.project.id })
+              }
+            >
+              {b.project.name}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={"cap-chip" + (eff.projectId == null ? " on" : "")}
+            onClick={() => setOver({ ...over, projectId: null })}
+          >
+            general
+          </button>
+        </div>
+        <div className="cap-group">
+          <span className="cap-group-label">Read</span>
+          {Object.keys(LOG_META).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={"cap-chip" + (eff.type === t ? " on t-" + t : "")}
+              onClick={() => setOver({ ...over, type: t })}
+            >
+              {LOG_META[t].label} · {LOG_META[t].desc}
+            </button>
+          ))}
+        </div>
+        <div className="cap-foot">
+          <span className="cap-hint">
+            {flash
+              ? ""
+              : text.trim()
+              ? "noon read the tags from your words — tap any to correct before filing."
+              : "plain words are enough — tags get read automatically."}
+            {flash && <span className="saved-note">{flash}</span>}
+          </span>
+          {SR && (
+            <button
+              type="button"
+              id="cap-mic"
+              className={"mic-btn" + (recording ? " rec" : "")}
+              onClick={toggleRec}
+            >
+              <span className="mic-dot" />
+              {recording ? "Listening — tap to stop" : "Voice note"}
+            </button>
+          )}
+          <button id="cap-log" className="btn-green" disabled={!text.trim()} onClick={commit}>
+            Log it
+          </button>
+        </div>
+      </div>
+
+      {alerts.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Worth your attention</h3>
+          <div className="card-sub">The notes and numbers that shouldn't wait.</div>
+          {alerts.slice(0, 5).map((al, i) => (
+            <div className="alert-row" key={i}>
+              <Dot color={al.color} />
+              <span className="al-txt">{al.text}</span>
+              <button className="al-link" onClick={() => go(al.page)}>
+                view →
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="linkgrid">
+        {[
+          { num: activeBundles.length, name: "Projects", sub: "case files & timeline", page: { name: "dashboard" } },
+          { num: peopleOnActive.size, name: "This week", sub: "plan the load", page: { name: "week" } },
+          { num: members.length, name: "People", sub: "trust profiles", page: { name: "roster" } },
+          {
+            num: 3,
+            name: "Reports",
+            sub: logs.length
+              ? "built from " + logs.length + " filed page" + (logs.length === 1 ? "" : "s")
+              : "review-ready drafts",
+            page: { name: "reports" },
+          },
+        ].map((c) => (
+          <button key={c.name} type="button" className="linkcard" onClick={() => go(c.page)}>
+            <span className="lc-num">{c.num}</span>
+            <span className="lc-name">{c.name}</span>
+            <span className="lc-sub">{c.sub}</span>
+          </button>
+        ))}
+      </div>
+
+      {logs.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <h3>Recent pages</h3>
+              <div className="card-sub" style={{ marginBottom: 0 }}>
+                {logs.length} filed · {logs.filter((l) => l.type === "stretch").length} stretch ·{" "}
+                {logs.filter((l) => l.type === "redline").length} redline — every page feeds
+                Reports.
+              </div>
+            </div>
+            <button className="btn2" onClick={() => go({ name: "reports" })}>
+              See what they build →
+            </button>
+          </div>
+          {logs.slice(0, 6).map((l) => (
+            <LogRow
+              key={l.id}
+              log={l}
+              membersById={membersById}
+              projectsById={projectsById}
+              onAnnotate={onAnnotate}
+              onDelete={onDeleteLog}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================== reports ============================== */
+
+function buildReport(kind, memberId, members, bundles, logs) {
+  const today = fmtDate(toISODate(new Date()));
+  const active = bundles.filter((b) => b.project.status === "active");
+  const L = [];
+
+  const logsFor = (mid) => logs.filter((l) => l.memberId === mid);
+  const quoteLog = (l) => "“" + l.text + "” (" + fmtWeek(l.date) + ")";
+
+  if (kind === "brief") {
+    L.push("TEAM BRIEF — " + today);
+    L.push("Assembled by noon from your notebook. Every line is editable — make it yours.");
+    L.push("");
+    L.push("CAPACITY");
+    for (const m of members) {
+      let total = 0;
+      const names = [];
+      for (const b of active)
+        for (const a of b.assignments)
+          if (a.memberId === m.id) {
+            total += Number(a.capacityAllocated) || 0;
+            names.push(b.project.name + " " + a.capacityAllocated + "%");
+          }
+      if (total > 100) L.push("- " + m.name + " is committed at " + total + "% (" + names.join(", ") + ") — stretched thin.");
+      else if (total > 0) L.push("- " + m.name + ": " + total + "% committed (" + names.join(", ") + ").");
+    }
+    const reds = logs.filter((l) => l.type === "redline").slice(0, 4);
+    if (reds.length) {
+      L.push("- Redline notes on file:");
+      for (const l of reds) {
+        const who = l.memberId && members.find((m) => m.id === l.memberId);
+        L.push("    · " + (who ? who.name + ": " : "") + quoteLog(l));
+      }
+    }
+    L.push("");
+    L.push("GROWTH");
+    let anyGrowth = false;
+    for (const m of members) {
+      const st = logsFor(m.id).filter((l) => l.type === "stretch");
+      if (st.length) {
+        anyGrowth = true;
+        L.push("- " + m.name + ": " + st.length + " stretch moment" + (st.length === 1 ? "" : "s") + " — latest: " + quoteLog(st[0]));
+      }
+    }
+    if (!anyGrowth) L.push("- No stretch moments filed yet — the notebook fills this in as you jot.");
+    L.push("");
+    L.push("DELIVERY");
+    for (const b of active) {
+      const weeks = new Set(b.checkIns.map((c) => c.weekOf));
+      const cnt = { "on track": 0, "at risk": 0, blocked: 0 };
+      let last = "";
+      for (const c of b.checkIns) {
+        if (cnt[c.progressStatus] != null) cnt[c.progressStatus]++;
+        if (c.weekOf > last) last = c.weekOf;
+      }
+      L.push(
+        "- " + b.project.name + ": " +
+          (weeks.size === 0
+            ? "no weeks logged yet."
+            : cnt["on track"] + " on track / " + cnt["at risk"] + " wobbling / " + cnt.blocked + " stuck across " + weeks.size + " logged week" + (weeks.size === 1 ? "" : "s") + "; last check-in wk of " + fmtWeek(last) + ".")
+      );
+      if (b.project.retrospective) L.push("    Your read: " + b.project.retrospective);
+    }
+    L.push("");
+    L.push("THE ASK");
+    L.push("- [Write your ask — headcount, deadline relief, the promotion case.]");
+    return L.join("\n");
+  }
+
+  const m = members.find((x) => x.id === memberId);
+  if (!m) return "Add someone to your roster first — reports build from their notebook.";
+  const mLogs = logsFor(m.id);
+  const byType = (t) => mLogs.filter((l) => l.type === t);
+
+  if (kind === "pack") {
+    L.push("REVIEW PACK — " + m.name + (m.role ? " (" + m.role + ")" : "") + " — " + today);
+    L.push("Everything you filed this year, in one place. The narrative is yours to write.");
+    L.push("");
+    L.push("PROFILE");
+    L.push("- Experience: " + expBucket(m.yearsExperience) + " · " + (Number(m.yearsExperience) || 0) + " years");
+    L.push("- Ownership: " + (RESP_LABELS[m.responsibilityLevel] || "—") + " (" + m.responsibilityLevel + "/5)");
+    L.push("- Core: " + ((m.coreCompetencies || []).join(", ") || "none noted") + "  ·  Stretch: " + ((m.stretchCompetencies || []).join(", ") || "none noted"));
+    L.push("");
+    L.push("ON PROJECTS");
+    let onAny = false;
+    for (const b of bundles) {
+      const a = b.assignments.find((x) => x.memberId === m.id);
+      if (!a) continue;
+      onAny = true;
+      const cis = b.checkIns.filter((c) => c.assignmentId === a.id);
+      const cnt = { "on track": 0, "at risk": 0, blocked: 0 };
+      let sum = 0;
+      for (const c of cis) {
+        if (cnt[c.progressStatus] != null) cnt[c.progressStatus]++;
+        sum += Number(c.capacityActual) || 0;
+      }
+      let line =
+        "- " + b.project.name + (b.project.status !== "active" ? " (wrapped)" : "") + ": planned " + a.capacityAllocated + "%";
+      if (cis.length) line += ", actually gave ~" + Math.round(sum / cis.length) + "%, " + cis.length + " check-ins (" + cnt["on track"] + " on track / " + cnt["at risk"] + " wobbling / " + cnt.blocked + " stuck)";
+      L.push(line + ".");
+      if (a.performanceSummary) L.push("    Your one-liner: “" + a.performanceSummary + "”");
+    }
+    if (!onAny) L.push("- Not on any project yet.");
+    for (const t of ["core", "stretch", "redline"]) {
+      const list = byType(t);
+      L.push("");
+      L.push("NOTEBOOK — " + LOG_META[t].label.toUpperCase() + " (" + list.length + ")");
+      if (!list.length) L.push("- nothing filed");
+      for (const l of list) L.push("- " + quoteLog(l));
+    }
+    L.push("");
+    L.push("YOUR NARRATIVE");
+    L.push("- [Write the story these facts support.]");
+    return L.join("\n");
+  }
+
+  /* 1:1 talking points */
+  const first = firstName(m.name);
+  L.push("1:1 TALKING POINTS — " + first + " — " + today);
+  L.push("Three zones, built from your own notes. Say it in your voice.");
+  L.push("");
+  L.push("ZONE 1 — ANCHOR THE WINS");
+  const cores = byType("core").slice(0, 3);
+  if (cores.length) for (const l of cores) L.push("- " + quoteLog(l));
+  else L.push("- Nothing filed yet — open with a genuine recent win.");
+  L.push("- Ask: “Which of these felt smoothest? What made it work?”");
+  L.push("");
+  L.push("ZONE 2 — NAME THE STRETCH");
+  const sts = byType("stretch").slice(0, 3);
+  if (sts.length) for (const l of sts) L.push("- " + quoteLog(l));
+  else L.push("- No stretch moments filed — worth hunting for one together.");
+  L.push("- Ask: “Where do you want more rope? What would you take on next?”");
+  L.push("");
+  L.push("ZONE 3 — CHECK THE REDLINE");
+  const reds2 = byType("redline").slice(0, 3);
+  if (reds2.length) for (const l of reds2) L.push("- " + quoteLog(l));
+  else L.push("- Nothing on file — still worth asking how the load actually feels.");
+  L.push("- Frame it as a workload problem you own together — not their stamina problem.");
+  L.push("- Ask: “What should we drop or hand off to make next week saner?”");
+  return L.join("\n");
+}
+
+function ReportsPage({ members, bundles, logs }) {
+  const KINDS = [
+    ["brief", "Justify upward"],
+    ["pack", "Review pack"],
+    ["oneone", "1:1 talking points"],
+  ];
+  const [kind, setKind] = useState("brief");
+  const [memberId, setMemberId] = useState(members[0] ? members[0].id : "");
+  const [draft, setDraft] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  const generated = useMemo(
+    () => buildReport(kind, memberId, members, bundles, logs),
+    [kind, memberId, members, bundles, logs]
+  );
+  const value = draft != null ? draft : generated;
+
+  const copy = () => {
+    const done = () => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(done, () => {
+        const el = document.getElementById("rep-out");
+        el.select();
+        document.execCommand("copy");
+        done();
+      });
+    } else {
+      const el = document.getElementById("rep-out");
+      el.select();
+      document.execCommand("copy");
+      done();
+    }
+  };
+
+  return (
+    <div>
+      <h1 className="page-title">Reports</h1>
+      <p className="page-sub">
+        Assembled from your notebook, never invented — the words stay yours to edit.
+      </p>
+
+      <div className="rep-pick">
+        {KINDS.map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            className={"chip-btn" + (kind === k ? " on" : "")}
+            onClick={() => {
+              setKind(k);
+              setDraft(null);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {kind !== "brief" && (
+        <div className="rep-pick">
+          {members.map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={"cap-chip" + (memberId === m.id ? " on" : "")}
+              onClick={() => {
+                setMemberId(m.id);
+                setDraft(null);
+              }}
+            >
+              {m.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <textarea
+        id="rep-out"
+        className="rep-out"
+        value={value}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <div className="modal-actions" style={{ marginTop: 12 }}>
+        {copied && <span className="saved-note">Copied ✓</span>}
+        {draft != null && (
+          <button className="btn2" onClick={() => setDraft(null)}>
+            Rebuild from notebook
+          </button>
+        )}
+        <button className="btn" onClick={copy}>
+          Copy text
+        </button>
+      </div>
+      <p className="rep-note">
+        Edit freely right here — noon assembles the facts, you write the story.
+      </p>
+    </div>
+  );
+}
+
+/* ============================== timeline ============================== */
+
+function ProjectTimeline({ bundles, onOpen }) {
+  const tm = thisMonday();
+  const weeks = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(tm + "T00:00:00");
+    d.setDate(d.getDate() - 7 * i);
+    weeks.push(toISODate(d));
+  }
+  const rows = [...bundles].sort((a, b) =>
+    a.project.status === b.project.status ? 0 : a.project.status === "active" ? -1 : 1
+  );
+  const worstFor = (b, wk) => {
+    let worst = null;
+    const rank = { blocked: 3, "at risk": 2, "on track": 1 };
+    for (const c of b.checkIns)
+      if (c.weekOf === wk && (!worst || rank[c.progressStatus] > rank[worst])) worst = c.progressStatus;
+    return worst;
+  };
+  const lastWeekOf = (b) => {
+    let last = mondayOf(b.project.startDate || tm);
+    for (const c of b.checkIns) if (c.weekOf > last) last = c.weekOf;
+    return last;
+  };
+
+  return (
+    <div className="card">
+      <div className="tl-wrap">
+        <div className="tl-grid">
+          <div className="tl-headrow">
+            <div className="tl-name" />
+            {weeks.map((w) => (
+              <div key={w} className="tl-hd">
+                {fmtWeek(w)}
+              </div>
+            ))}
+          </div>
+          {rows.map((b) => {
+            const startWk = mondayOf(b.project.startDate || tm);
+            const endWk = b.project.status === "active" ? tm : lastWeekOf(b);
+            return (
+              <div className="tl-row" key={b.project.id}>
+                <button
+                  type="button"
+                  className={"tl-name btn-txt" + (b.project.status !== "active" ? " dim" : "")}
+                  style={{ textAlign: "left", padding: "8px 10px 8px 0" }}
+                  onClick={() => onOpen(b.project.id, "progression")}
+                >
+                  {b.project.name}
+                </button>
+                {weeks.map((w) => {
+                  const inRange = w >= startWk && w <= endWk;
+                  const worst = inRange ? worstFor(b, w) : null;
+                  return (
+                    <div key={w} className={"tl-cell" + (w === tm ? " now" : "")}>
+                      {inRange && (
+                        <span
+                          className={
+                            "tl-track" + (w === startWk ? " start" : "") + (w === endWk ? " end" : "")
+                          }
+                        />
+                      )}
+                      {worst && <Dot color={STATUS_META[worst].color} />}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="tl-legend">
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Dot color={STATUS_META["on track"].color} /> on track
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Dot color={STATUS_META["at risk"].color} /> wobbling
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <Dot color={STATUS_META.blocked.color} /> stuck
+        </span>
+        <span>· current week highlighted · worst status shown per week</span>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== vitals ============================== */
+
+function computeVitals(members, bundles, logs) {
+  const active = bundles.filter((b) => b.project.status === "active");
+  const perMember = [];
+  for (const m of members) {
+    let total = 0;
+    const items = [];
+    for (const b of active)
+      for (const a of b.assignments)
+        if (a.memberId === m.id) {
+          total += Number(a.capacityAllocated) || 0;
+          items.push({ bundle: b, assignment: a });
+        }
+    if (items.length) perMember.push({ member: m, total, items });
+  }
+  const avg = perMember.length
+    ? Math.round(perMember.reduce((s, r) => s + r.total, 0) / perMember.length)
+    : 0;
+
+  const cut = new Date();
+  cut.setDate(cut.getDate() - 14);
+  const cutoff = toISODate(cut);
+  const redLogs = logs.filter((l) => l.type === "redline" && l.date >= cutoff);
+  const redPeople = new Set(redLogs.map((l) => l.memberId).filter(Boolean));
+  for (const r of perMember) if (r.total > 100) redPeople.add(r.member.id);
+
+  const cut30 = new Date();
+  cut30.setDate(cut30.getDate() - 30);
+  const stretchLogs = logs.filter((l) => l.type === "stretch" && l.date >= toISODate(cut30));
+
+  return { avg, perMember, redLogs, redCount: redPeople.size, stretchLogs };
+}
+
+function VitalsBar({ members, bundles, logs, onOpen }) {
+  const v = computeVitals(members, bundles, logs);
+  const loadColor =
+    v.perMember.length === 0
+      ? "#9C9284"
+      : v.avg > 95
+      ? LOG_META.redline.color
+      : v.avg > 75
+      ? STATUS_META["at risk"].color
+      : STATUS_META["on track"].color;
+  return (
+    <div className="vitals">
+      <div className="vitals-in">
+        <button className="vital" id="vital-load" onClick={() => onOpen("load")}>
+          <Dot color={loadColor} />
+          <span className="vt-label">Team load</span>
+          <span className="vt-value">{v.perMember.length ? v.avg + "% avg" : "—"}</span>
+          <span className="vt-go">›</span>
+        </button>
+        <button className="vital" id="vital-redline" onClick={() => onOpen("redline")}>
+          <Dot color={v.redCount > 0 ? LOG_META.redline.color : STATUS_META["on track"].color} />
+          <span className="vt-label">Redline</span>
+          <span className="vt-value">
+            {v.redCount > 0 ? v.redCount + (v.redCount === 1 ? " person" : " people") : "clear"}
+          </span>
+          <span className="vt-go">›</span>
+        </button>
+        <button className="vital" id="vital-stretch" onClick={() => onOpen("stretch")}>
+          <Dot color="#0FA968" />
+          <span className="vt-label">Stretch</span>
+          <span className="vt-value">
+            {v.stretchLogs.length} moment{v.stretchLogs.length === 1 ? "" : "s"}
+          </span>
+          <span className="vt-go">›</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VitalsOverlay({
+  tab,
+  onTab,
+  onClose,
+  members,
+  bundles,
+  logs,
+  membersById,
+  projectsById,
+  onAnnotate,
+  onDeleteLog,
+  go,
+}) {
+  const v = computeVitals(members, bundles, logs);
+  const over = v.perMember.filter((r) => r.total > 100);
+  const TABS = [
+    ["load", "Team load (" + (v.perMember.length ? v.avg + "%" : "—") + ")", "#E39310"],
+    ["redline", "Redline (" + v.redCount + ")", "#CE3B2C"],
+    ["stretch", "Stretch (" + v.stretchLogs.length + ")", "#0C8F58"],
+  ];
+  return (
+    <div className="jov">
+      <div className="jov-in">
+        <div className="jov-top">
+          <span className="jov-eyebrow">Team health</span>
+          <button className="jov-x" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <h2 className="jq" style={{ marginTop: 12 }}>
+          The vitals
+        </h2>
+        <p className="jsub">What the chips are counting — and who's behind the numbers.</p>
+        <div className="tabs" style={{ justifyContent: "center", margin: "0 0 18px" }}>
+          {TABS.map(([k, label, c]) => (
+            <button
+              key={k}
+              className={tab === k ? "on" : ""}
+              style={tab === k ? { background: c, color: "#fff" } : null}
+              onClick={() => onTab(k)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1 }}>
+          {tab === "load" && (
+            <React.Fragment>
+              {v.perMember.length > 0 && (
+                <div className="card" style={{ marginBottom: 14 }}>
+                  <div className="row" style={{ alignItems: "baseline" }}>
+                    <div style={{ flex: 1 }}>
+                      <h3>Overall team load</h3>
+                      <div className="card-sub" style={{ marginBottom: 0 }}>
+                        Average standing commitment across everyone on active projects.
+                      </div>
+                    </div>
+                    <span
+                      className="load-pill"
+                      style={{
+                        background: loadTint(v.avg),
+                        color: loadColor(v.avg),
+                        fontSize: 17,
+                        padding: "5px 16px",
+                      }}
+                    >
+                      {v.avg}% avg
+                    </span>
+                  </div>
+                  <AllocBar total={v.avg} />
+                  <div className="vt-gauge-labels">
+                    <span style={{ color: "#1E9E63" }}>healthy ≤75%</span>
+                    <span style={{ color: "#E39310" }}>loaded 76–100%</span>
+                    <span style={{ color: "#CE3B2C" }}>overloaded &gt;100%</span>
+                  </div>
+                  {v.avg > 75 && (
+                    <p style={{ fontSize: 13, color: "#8A6A28", margin: "10px 0 0", fontWeight: 600 }}>
+                      Caution — the team is heavily loaded. Think twice before adding stretch
+                      targets this week.
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="card">
+                {v.perMember.length === 0 ? (
+                  <p style={{ color: "#9C9284", fontSize: 14, margin: 0 }}>
+                    No one is on an active project yet — the load picture starts there.
+                  </p>
+                ) : (
+                  v.perMember.map((r) => (
+                    <div className="vt-row" key={r.member.id} style={{ alignItems: "flex-start" }}>
+                      <Avatar name={r.member.name} />
+                      <div className="vt-who">
+                        <div className="row" style={{ gap: 8 }}>
+                          <span className="vt-nm">{r.member.name}</span>
+                          <span
+                            className="load-pill"
+                            style={{ background: loadTint(r.total), color: loadColor(r.total) }}
+                          >
+                            {r.total}%
+                          </span>
+                        </div>
+                        <AllocBar total={r.total} />
+                        <div className="vt-band">
+                          {r.items
+                            .map(
+                              (it) =>
+                                it.bundle.project.name + " " + it.assignment.capacityAllocated + "%"
+                            )
+                            .join(" · ")}
+                        </div>
+                      </div>
+                      <button className="btn2" onClick={() => go({ name: "week" })}>
+                        This week →
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </React.Fragment>
+          )}
+
+          {tab === "redline" && (
+            <div className="card">
+              {v.redCount === 0 && v.redLogs.length === 0 ? (
+                <p style={{ color: "#9C9284", fontSize: 14, margin: 0 }}>
+                  No one's in the red — as it should be.
+                </p>
+              ) : (
+                <React.Fragment>
+                  <div className="vt-banner">
+                    <div className="vb-title">Intervention recommended</div>
+                    <div className="vb-sub">
+                      {v.redCount} {v.redCount === 1 ? "person is" : "people are"} beyond a safe
+                      working load. Redlines cost you quality first and people second — rebalance
+                      before they do.
+                    </div>
+                  </div>
+                  {over.map((r) => (
+                    <div className="vt-row" key={r.member.id}>
+                      <Dot color={LOG_META.redline.color} />
+                      <div className="vt-who">
+                        <div className="vt-nm">{r.member.name}</div>
+                        <div className="vt-rl">
+                          committed across {r.items.length} project
+                          {r.items.length === 1 ? "" : "s"} — stretched thin
+                        </div>
+                      </div>
+                      <span
+                        className="load-pill"
+                        style={{ background: "#FAE3DF", color: "#CE3B2C" }}
+                      >
+                        {r.total}%
+                      </span>
+                      <button className="btn2" onClick={() => go({ name: "week" })}>
+                        Rebalance →
+                      </button>
+                    </div>
+                  ))}
+                  {v.redLogs.map((l) => (
+                    <LogRow
+                      key={l.id}
+                      log={l}
+                      membersById={membersById}
+                      projectsById={projectsById}
+                      onAnnotate={onAnnotate}
+                      onDelete={onDeleteLog}
+                    />
+                  ))}
+                </React.Fragment>
+              )}
+            </div>
+          )}
+
+          {tab === "stretch" && (
+            <div className="card">
+              {v.stretchLogs.length === 0 ? (
+                <p style={{ color: "#9C9284", fontSize: 14, margin: 0 }}>
+                  None filed in the last 30 days — worth hunting for one together.
+                </p>
+              ) : (
+                v.stretchLogs.map((l) => (
+                  <LogRow
+                    key={l.id}
+                    log={l}
+                    membersById={membersById}
+                    projectsById={projectsById}
+                    onAnnotate={onAnnotate}
+                    onDelete={onDeleteLog}
+                  />
+                ))
+              )}
+              {v.stretchLogs.length > 0 && (
+                <p className="rep-note" style={{ marginTop: 10 }}>
+                  This is the promotion-case evidence writing itself — it feeds the Reports page.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="jfoot">
+          <button className="btn" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============================== dashboard ============================== */
 
 function Dashboard({ bundles, members, membersById, onOpen, onNewProject, onNewMember }) {
+  const [view, setView] = useState("list");
   const active = bundles.filter((b) => b.project.status === "active");
   const wrapped = bundles.filter((b) => b.project.status !== "active");
   const nothingYet = bundles.length === 0 && members.length === 0;
@@ -1241,40 +2479,55 @@ function Dashboard({ bundles, members, membersById, onOpen, onNewProject, onNewM
         </div>
       ) : (
         <React.Fragment>
-          <div className="section-head" style={{ marginTop: 0 }}>
-            <h2>Active</h2>
-            <button className="btn" onClick={onNewProject}>
+          <div className="section-head" style={{ marginTop: 0, gap: 12 }}>
+            <h2>{view === "timeline" ? "Timeline" : "Active"}</h2>
+            <span className="viewtoggle" style={{ marginLeft: "auto" }}>
+              <button className={view === "list" ? "on" : ""} onClick={() => setView("list")}>
+                Cards
+              </button>
+              <button className={view === "timeline" ? "on" : ""} onClick={() => setView("timeline")}>
+                Timeline
+              </button>
+            </span>
+            <button className="btn" style={{ marginLeft: 12 }} onClick={onNewProject}>
               New project
             </button>
           </div>
-          {active.length === 0 ? (
-            <div className="card empty">
-              <p style={{ marginBottom: 0 }}>Nothing active right now — a quiet moment.</p>
-            </div>
-          ) : (
-            <div className="grid2">
-              {active.map((b) => (
-                <ProjectCard key={b.project.id} bundle={b} membersById={membersById} onOpen={onOpen} />
-              ))}
-            </div>
-          )}
 
-          {wrapped.length > 0 && (
+          {view === "timeline" ? (
+            <ProjectTimeline bundles={bundles} onOpen={onOpen} />
+          ) : (
             <React.Fragment>
-              <div className="section-head">
-                <h2>Wrapped up</h2>
-              </div>
-              <div className="grid2">
-                {wrapped.map((b) => (
-                  <ProjectCard
-                    key={b.project.id}
-                    bundle={b}
-                    membersById={membersById}
-                    onOpen={onOpen}
-                    wrapped
-                  />
-                ))}
-              </div>
+              {active.length === 0 ? (
+                <div className="card empty">
+                  <p style={{ marginBottom: 0 }}>Nothing active right now — a quiet moment.</p>
+                </div>
+              ) : (
+                <div className="grid2">
+                  {active.map((b) => (
+                    <ProjectCard key={b.project.id} bundle={b} membersById={membersById} onOpen={onOpen} />
+                  ))}
+                </div>
+              )}
+
+              {wrapped.length > 0 && (
+                <React.Fragment>
+                  <div className="section-head">
+                    <h2>Wrapped up</h2>
+                  </div>
+                  <div className="grid2">
+                    {wrapped.map((b) => (
+                      <ProjectCard
+                        key={b.project.id}
+                        bundle={b}
+                        membersById={membersById}
+                        onOpen={onOpen}
+                        wrapped
+                      />
+                    ))}
+                  </div>
+                </React.Fragment>
+              )}
             </React.Fragment>
           )}
         </React.Fragment>
@@ -1286,41 +2539,56 @@ function Dashboard({ bundles, members, membersById, onOpen, onNewProject, onNewM
 function ProjectCard({ bundle, membersById, onOpen, wrapped }) {
   const { project, assignments, checkIns } = bundle;
   const lastWeek = checkIns.reduce((acc, c) => (c.weekOf > acc ? c.weekOf : acc), "");
+  // Skills the project needs, mined from the requirements text — no extra
+  // data entry, the card enriches itself.
+  const needs = project.requirements ? extractSkills(project.requirements).slice(0, 4) : [];
   return (
     <div
       className="card proj-card"
       style={wrapped ? { opacity: 0.82 } : null}
       onClick={() => onOpen(project.id, wrapped ? "wrapup" : "progression")}
     >
-      <div className="row" style={{ alignItems: "baseline" }}>
+      <div className="row" style={{ alignItems: "baseline", gap: 10 }}>
         <h3 style={{ flex: 1, minWidth: 0 }}>{project.name}</h3>
+        {project.category && <span className="pcat">{project.category}</span>}
         {wrapped && (
-          <span className="pill" style={{ background: "#F8F3EA", color: "#B4A88F" }}>
+          <span className="pill" style={{ background: "#EAE2D4", color: "#9C9284" }}>
             Wrapped up
           </span>
         )}
       </div>
       <p className="proj-desc">{project.description || "No description yet."}</p>
-      <div className="proj-foot">
-        <span className="av-stack">
-          {assignments.slice(0, 5).map((a) => {
-            const m = membersById[a.memberId];
-            const latest = latestCheckIn(checkIns, a.id);
-            const meta = latest ? STATUS_META[latest.progressStatus] : NO_STATUS;
-            return (
-              <span
-                key={a.id}
-                className="av-wrap"
-                title={(m ? m.name : "?") + " — " + meta.label}
-              >
-                <Avatar name={m ? m.name : "?"} />
-                <span className="av-dot" style={{ background: meta.color }} />
-              </span>
-            );
-          })}
-        </span>
+      {needs.length > 0 && (
+        <div className="pc-needs">
+          <span className="mini-label">Needs</span>
+          {needs.map((s) => (
+            <span key={s} className="tag">
+              {s}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="pc-team">
         {assignments.length === 0 && <span className="tag-none">no one on it yet</span>}
-        <span className="proj-meta">
+        {assignments.slice(0, 4).map((a) => {
+          const m = membersById[a.memberId];
+          const latest = latestCheckIn(checkIns, a.id);
+          const meta = latest ? STATUS_META[latest.progressStatus] : NO_STATUS;
+          return (
+            <div className="pc-person" key={a.id}>
+              <Dot color={meta.color} />
+              <span className="pc-nm">{m ? m.name : "?"}</span>
+              <span className="pc-status">
+                {m && m.role ? m.role + " · " : ""}
+                {latest ? meta.label.toLowerCase() : "no check-ins yet"}
+              </span>
+            </div>
+          );
+        })}
+        {assignments.length > 4 && (
+          <span className="trust-sub">+ {assignments.length - 4} more</span>
+        )}
+        <span className="proj-meta" style={{ marginLeft: 0, textAlign: "left", marginTop: 3 }}>
           {lastWeek ? "last check-in · wk of " + fmtWeek(lastWeek) : "no check-ins yet"}
         </span>
       </div>
@@ -1330,8 +2598,11 @@ function ProjectCard({ bundle, membersById, onOpen, wrapped }) {
 
 /* ============================== roster ============================== */
 
-function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember, onAddNote, onDeleteNote }) {
+function Roster({ members, bundles, logs, membersById, projectsById, onNewMember, onEditMember, onDeleteMember, onAddLog, onAnnotate, onDeleteLog }) {
   const activeBundles = bundles.filter((b) => b.project.status === "active");
+  const cut = new Date();
+  cut.setDate(cut.getDate() - 14);
+  const cutoff = toISODate(cut);
 
   const allocFor = (memberId) => {
     const rows = [];
@@ -1371,6 +2642,8 @@ function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember, o
           {members.map((m) => {
             const rows = allocFor(m.id);
             const total = rows.reduce((s, r) => s + (Number(r.capacity) || 0), 0);
+            const mLogs = logs.filter((l) => l.memberId === m.id);
+            const hasRedline = mLogs.some((l) => l.type === "redline" && l.date >= cutoff);
             return (
               <div className="card member-card" key={m.id}>
                 <div className="row">
@@ -1379,6 +2652,11 @@ function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember, o
                     <h3>{m.name}</h3>
                     <div className="trust-sub">{m.role || "—"}</div>
                   </div>
+                  {hasRedline && (
+                    <span className="pill" style={{ background: LOG_META.redline.tint, color: LOG_META.redline.color }}>
+                      <Dot color={LOG_META.redline.color} /> redline
+                    </span>
+                  )}
                   <button className="btn-txt" onClick={() => onEditMember(m)}>
                     Edit
                   </button>
@@ -1399,7 +2677,7 @@ function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember, o
                       "Not on any active project — room to breathe."
                     ) : (
                       <React.Fragment>
-                        <b style={{ color: total > 100 ? "#C0564F" : "#33302B" }}>{total}%</b> of
+                        <b style={{ color: total > 100 ? "#B5544D" : "#2B2B2B" }}>{total}%</b> of
                         their week is spoken for
                         {total > 100 && <span className="alloc-over"> · stretched thin</span>}
                         {total > 0 && total < 50 && " · room for more"}
@@ -1418,28 +2696,28 @@ function Roster({ members, bundles, onNewMember, onEditMember, onDeleteMember, o
                 </div>
 
                 <div style={{ marginTop: 14 }}>
-                  <span className="label">Field notes</span>
-                  {(m.fieldNotes || [])
-                    .slice(-3)
-                    .reverse()
-                    .map((n) => (
-                      <div className="fnote" key={n.id}>
-                        <span className="fn-date">{fmtWeek(n.date)}</span>
-                        <span style={{ flex: 1 }}>{n.text}</span>
-                        <button
-                          type="button"
-                          className="fn-x"
-                          aria-label="Delete note"
-                          onClick={() => onDeleteNote(m.id, n.id)}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  {(m.fieldNotes || []).length > 3 && (
-                    <div className="trust-sub">+ {(m.fieldNotes || []).length - 3} earlier</div>
+                  <span className="label">Notebook</span>
+                  {mLogs.slice(0, 2).map((l) => (
+                    <LogRow
+                      key={l.id}
+                      log={l}
+                      membersById={membersById}
+                      projectsById={projectsById}
+                      onAnnotate={onAnnotate}
+                      onDelete={onDeleteLog}
+                      showWho={false}
+                    />
+                  ))}
+                  {mLogs.length > 2 && (
+                    <div className="trust-sub">+ {mLogs.length - 2} earlier — full record in Reports</div>
                   )}
-                  <QuickNote id={"note-" + m.id} onAdd={(t) => onAddNote(m.id, t)} />
+                  <QuickNote
+                    id={"note-" + m.id}
+                    onAdd={(t) => {
+                      const s = parseCapture(t, [], bundles);
+                      onAddLog({ memberId: m.id, projectId: s.projectId, type: s.type, text: t });
+                    }}
+                  />
                 </div>
               </div>
             );
@@ -1574,12 +2852,13 @@ function ProjectView(props) {
         <h1 className="page-title" style={{ marginTop: 0 }}>
           {project.name}
         </h1>
+        {project.category && <span className="pcat">{project.category}</span>}
         <span
           className="pill"
           style={
             project.status === "active"
-              ? { background: "#EAF3EE", color: "#3D8B63" }
-              : { background: "#F8F3EA", color: "#B4A88F" }
+              ? { background: STATUS_META["on track"].tint, color: STATUS_META["on track"].color }
+              : { background: "#EAE2D4", color: "#9C9284" }
           }
         >
           {project.status === "active" ? "Active" : "Wrapped up"}
@@ -1625,6 +2904,7 @@ function OnboardingTab({
   const { project, assignments } = bundle;
   const [draft, setDraft] = useState({
     name: project.name,
+    category: project.category || "",
     description: project.description || "",
     requirements: project.requirements || "",
     startDate: project.startDate || "",
@@ -1634,6 +2914,7 @@ function OnboardingTab({
 
   const dirty =
     draft.name !== project.name ||
+    draft.category !== (project.category || "") ||
     draft.description !== (project.description || "") ||
     draft.requirements !== (project.requirements || "") ||
     draft.startDate !== (project.startDate || "") ||
@@ -1657,6 +2938,16 @@ function OnboardingTab({
           <div className="field">
             <label htmlFor="p-name">Name</label>
             <input id="p-name" className="inp" value={draft.name} onChange={set("name")} />
+          </div>
+          <div className="field" style={{ maxWidth: 200 }}>
+            <label htmlFor="p-cat">Kind of work</label>
+            <input
+              id="p-cat"
+              className="inp"
+              value={draft.category}
+              onChange={set("category")}
+              placeholder="e.g. Strategy & Ops"
+            />
           </div>
           <div className="field" style={{ maxWidth: 190 }}>
             <label htmlFor="p-start">Kicked off</label>
@@ -1718,7 +3009,7 @@ function OnboardingTab({
         </div>
 
         {assignments.length === 0 ? (
-          <p style={{ color: "#A0937F", fontSize: 14, margin: "14px 0 4px" }}>
+          <p style={{ color: "#9C9284", fontSize: 14, margin: "14px 0 4px" }}>
             No one on this yet. Add people to start the weekly rhythm.
           </p>
         ) : (
@@ -1977,8 +3268,9 @@ function CheckInCard({ assignment, member, history, getPlanned, onSave }) {
 
 /* ---------- wrap-up tab ---------- */
 
-function WrapUpTab({ bundle, membersById, onUpdateProject, onUpdateAssignment }) {
+function WrapUpTab({ bundle, membersById, projectsById, logs, onAnnotate, onDeleteLog, onUpdateProject, onUpdateAssignment }) {
   const { project, assignments, checkIns } = bundle;
+  const projLogs = (logs || []).filter((l) => l.projectId === project.id);
 
   const weeks = useMemo(() => {
     const map = {};
@@ -2148,12 +3440,32 @@ function WrapUpTab({ bundle, membersById, onUpdateProject, onUpdateAssignment })
         </div>
       )}
 
+      {projLogs.length > 0 && (
+        <React.Fragment>
+          <div className="section-head">
+            <h2>Notebook entries</h2>
+          </div>
+          <div className="card">
+            {projLogs.map((l) => (
+              <LogRow
+                key={l.id}
+                log={l}
+                membersById={membersById}
+                projectsById={projectsById || {}}
+                onAnnotate={onAnnotate}
+                onDelete={onDeleteLog}
+              />
+            ))}
+          </div>
+        </React.Fragment>
+      )}
+
       <div className="section-head">
         <h2>Week by week</h2>
       </div>
       <div className="card">
         {weeks.length === 0 ? (
-          <p style={{ color: "#A0937F", fontSize: 14, margin: 0 }}>
+          <p style={{ color: "#9C9284", fontSize: 14, margin: 0 }}>
             Nothing logged yet — the wrap-up writes itself from weekly check-ins.
           </p>
         ) : (
@@ -2188,8 +3500,10 @@ function App() {
   const [storageOk, setStorageOk] = useState(true);
   const [members, setMembers] = useState([]);
   const [bundles, setBundles] = useState([]);
-  const [page, setPage] = useState({ name: "dashboard" });
+  const [logs, setLogs] = useState([]);
+  const [page, setPage] = useState({ name: "home" });
   const [modal, setModal] = useState(null);
+  const [vitals, setVitals] = useState(null);
 
   /* ---- load everything once ---- */
   useEffect(() => {
@@ -2215,8 +3529,43 @@ function App() {
           }
         }
         loaded.sort((a, b) => (a.project.startDate || "").localeCompare(b.project.startDate || ""));
-        setMembers(Array.isArray(m) ? m : []);
+
+        let mem = Array.isArray(m) ? m : [];
+        let logsData = await sGet(LOGS_KEY);
+        logsData = Array.isArray(logsData) ? logsData : [];
+
+        // One-time migration: fold legacy per-member field notes into the
+        // notebook log stream, then strip them from the member records.
+        const hadLegacy = mem.some((mm) => mm.fieldNotes && mm.fieldNotes.length);
+        if (hadLegacy) {
+          for (const mm of mem) {
+            for (const n of mm.fieldNotes || []) {
+              if (!logsData.some((l) => l.id === n.id)) {
+                logsData.push({
+                  id: n.id,
+                  memberId: mm.id,
+                  projectId: null,
+                  type: "core",
+                  text: n.text,
+                  date: n.date,
+                  annotations: [],
+                });
+              }
+            }
+          }
+          mem = mem.map((mm) => {
+            const c = { ...mm };
+            delete c.fieldNotes;
+            return c;
+          });
+          sSet(LOGS_KEY, logsData).catch(() => {});
+          sSet(MEMBERS_KEY, mem).catch(() => {});
+        }
+        logsData.sort((a, b) => (a.date < b.date ? 1 : -1));
+
+        setMembers(mem);
         setBundles(loaded);
+        setLogs(logsData);
       } catch (e) {
         console.error("Noon: failed to load data", e);
       }
@@ -2229,6 +3578,12 @@ function App() {
     for (const m of members) map[m.id] = m;
     return map;
   }, [members]);
+
+  const projectsById = useMemo(() => {
+    const map = {};
+    for (const b of bundles) map[b.project.id] = b.project;
+    return map;
+  }, [bundles]);
 
   /* ---- persistence ---- */
   const persistMembers = useCallback((list) => {
@@ -2263,6 +3618,7 @@ function App() {
       project: {
         id: projectId,
         name: fields.name.trim(),
+        category: (fields.category || "").trim(),
         description: fields.description || "",
         requirements: fields.requirements || "",
         status: "active",
@@ -2302,6 +3658,7 @@ function App() {
 
   const deleteMember = (memberId) => {
     persistMembers(members.filter((m) => m.id !== memberId));
+    persistLogs(logs.filter((l) => l.memberId !== memberId));
     for (const b of bundles) {
       const dropped = b.assignments.filter((a) => a.memberId === memberId).map((a) => a.id);
       if (dropped.length === 0) continue;
@@ -2360,31 +3717,43 @@ function App() {
     persistBundle({ ...b, weekPlans });
   };
 
-  const addFieldNote = (memberId, text) => {
-    persistMembers(
-      members.map((m) =>
-        m.id === memberId
+  const persistLogs = useCallback((list) => {
+    setLogs(list);
+    sSet(LOGS_KEY, list).catch((e) => console.error("Noon: save failed", e));
+  }, []);
+
+  const addLog = ({ memberId, projectId, type, text }) => {
+    persistLogs([
+      {
+        id: uid(),
+        memberId: memberId || null,
+        projectId: projectId || null,
+        type: type || "core",
+        text: text.trim(),
+        date: toISODate(new Date()),
+        annotations: [],
+      },
+      ...logs,
+    ]);
+  };
+
+  const annotateLog = (logId, text) => {
+    persistLogs(
+      logs.map((l) =>
+        l.id === logId
           ? {
-              ...m,
-              fieldNotes: [
-                ...(m.fieldNotes || []),
-                { id: uid(), date: toISODate(new Date()), text },
+              ...l,
+              annotations: [
+                ...(l.annotations || []),
+                { id: uid(), date: toISODate(new Date()), text: text.trim() },
               ],
             }
-          : m
+          : l
       )
     );
   };
 
-  const deleteFieldNote = (memberId, noteId) => {
-    persistMembers(
-      members.map((m) =>
-        m.id === memberId
-          ? { ...m, fieldNotes: (m.fieldNotes || []).filter((n) => n.id !== noteId) }
-          : m
-      )
-    );
-  };
+  const deleteLog = (logId) => persistLogs(logs.filter((l) => l.id !== logId));
 
   const saveCheckIn = (projectId, data) => {
     const b = bundles.find((x) => x.project.id === projectId);
@@ -2405,7 +3774,7 @@ function App() {
         <style>{CSS}</style>
         <div
           className="container"
-          style={{ paddingTop: 80, textAlign: "center", color: "#A0937F" }}
+          style={{ paddingTop: 80, textAlign: "center", color: "#9C9284" }}
         >
           Opening your case files…
         </div>
@@ -2431,16 +3800,36 @@ function App() {
   }
 
   let content;
-  if (page.name === "roster") {
+  if (page.name === "home") {
+    content = (
+      <HomePage
+        members={members}
+        bundles={bundles}
+        logs={logs}
+        membersById={membersById}
+        projectsById={projectsById}
+        onAddLog={addLog}
+        onAnnotate={annotateLog}
+        onDeleteLog={deleteLog}
+        go={(p) => setPage(p)}
+      />
+    );
+  } else if (page.name === "reports") {
+    content = <ReportsPage members={members} bundles={bundles} logs={logs} />;
+  } else if (page.name === "roster") {
     content = (
       <Roster
         members={members}
         bundles={bundles}
+        logs={logs}
+        membersById={membersById}
+        projectsById={projectsById}
         onNewMember={() => setModal({ type: "member" })}
         onEditMember={(m) => setModal({ type: "member", member: m })}
         onDeleteMember={deleteMember}
-        onAddNote={addFieldNote}
-        onDeleteNote={deleteFieldNote}
+        onAddLog={addLog}
+        onAnnotate={annotateLog}
+        onDeleteLog={deleteLog}
       />
     );
   } else if (page.name === "week") {
@@ -2458,6 +3847,10 @@ function App() {
       <ProjectView
         bundle={bundle}
         membersById={membersById}
+        projectsById={projectsById}
+        logs={logs}
+        onAnnotate={annotateLog}
+        onDeleteLog={deleteLog}
         tab={page.tab || "onboarding"}
         onTab={(tab) => setPage({ ...page, tab })}
         onBack={() => setPage({ name: "dashboard" })}
@@ -2498,11 +3891,18 @@ function App() {
   return (
     <div className="noon-root">
       <style>{CSS}</style>
+      <div className="paper-noise" aria-hidden="true" />
       <header className="hdr">
-        <button className="wordmark" onClick={() => setPage({ name: "dashboard" })}>
+        <button className="wordmark" onClick={() => setPage({ name: "home" })}>
           noon<span className="wm-dot">.</span>
         </button>
         <nav className="nav">
+          <button
+            className={page.name === "home" ? "on" : ""}
+            onClick={() => setPage({ name: "home" })}
+          >
+            Notebook
+          </button>
           <button
             className={page.name === "dashboard" || page.name === "project" ? "on" : ""}
             onClick={() => setPage({ name: "dashboard" })}
@@ -2521,10 +3921,37 @@ function App() {
           >
             People
           </button>
+          <button
+            className={page.name === "reports" ? "on" : ""}
+            onClick={() => setPage({ name: "reports" })}
+          >
+            Reports
+          </button>
         </nav>
       </header>
 
+      <VitalsBar members={members} bundles={bundles} logs={logs} onOpen={(t) => setVitals(t)} />
+
       <main className="container">{content}</main>
+
+      {vitals && (
+        <VitalsOverlay
+          tab={vitals}
+          onTab={(t) => setVitals(t)}
+          onClose={() => setVitals(null)}
+          members={members}
+          bundles={bundles}
+          logs={logs}
+          membersById={membersById}
+          projectsById={projectsById}
+          onAnnotate={annotateLog}
+          onDeleteLog={deleteLog}
+          go={(p) => {
+            setPage(p);
+            setVitals(null);
+          }}
+        />
+      )}
 
       {modal && modal.type === "project" && (
         <ProjectJourney members={members} onCreate={createProject} onClose={() => setModal(null)} />
